@@ -396,6 +396,8 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
     plotting_time = 0.
     start_time = timeit.default_timer()
 
+    #In order visualize cost evolution during training phase
+    cost_y = []
     # go through training epochs
     for epoch in xrange(training_epochs):
         # go through the training set
@@ -403,12 +405,12 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
         for batch_index in xrange(n_train_batches): #for each minibatch
             mean_cost += [train_rbm(batch_index)]
         print 'Training epoch %d, cost is ' % epoch, numpy.mean(mean_cost)
+        cost_y.append(numpy.mean(mean_cost))
 
     end_time = timeit.default_timer()
     pretraining_time = (end_time - start_time) - plotting_time
-
     print ('RBM : Training took %f minutes' % (pretraining_time / 60.))
-    return rbm
+    return rbm, cost_y
 
 
 
@@ -425,7 +427,7 @@ if __name__ == '__main__':
     #You're prevously chosen to train a RBM, so create it and save it
     if do_training_phase:
         trainingSet, ignored, ignored, ignored, ignored, ignored, trainingLen = generate_dataset(training_files, training_labels)
-        rbm = create_train_rbm(dataset=trainingSet, seqlen = trainingLen)
+        rbm = create_train_rbm(dataset=trainingSet, seqlen = trainingLen)[0]
         #save our network
         with open('best_model_rbm.pkl', 'w') as f:
             cPickle.dump(rbm, f)

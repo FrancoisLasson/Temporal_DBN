@@ -13,7 +13,8 @@ To do that, we stacked a regressive layer on top of a TDBN, a new layer who is i
 
 #Numpy and Theano library
 import numpy as np
-import matplotlib.pyplot as plt #display ROC Curves
+#Import pyPlot to display cost evolution during learning phase
+import matplotlib.pyplot as plt
 import theano
 import theano.tensor as T
 #Use to compute learning time
@@ -145,29 +146,47 @@ class TDBN(object):
 def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
-                      number_hidden_crbm = 50, n_label=3,
-                      rbm_training_epoch = 5000, crbm_pretraining_epoch = 10000, finetune_epoch = 10000):
+                      rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
+                      number_hidden_crbm = 50, n_label=3, crbm_pretraining_epoch = 10000, finetune_epoch = 10000):
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
-    retrain_rbms = False
-    regenerate_crbm_dataset = False
-    retrain_crbm = False
+    retrain_rbms = True
+    regenerate_crbm_dataset = True
+    retrain_crbm = True
 
     #First step : generate dataset from files
     data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(training_files, training_labels)
     data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
+
+    #In order to have an idea of cost evolution during training phase (convergence, oscilation, etc.) we save their prints in a plot.
+    #So, we have create and initialize a pyplot
+    if (retrain_rbms) :
+        title = "RBMs training phase : \n epoch="+str(rbm_training_epoch)+"; Number of hidden= "+str(rbm_n_hidden)+"; Learning rate="+str(rbm_learning_rate)
+        plt.title(title)
+        plt.ylabel("Cost")
+        plt.xlabel("Epoch")
+        x= xrange(rbm_training_epoch)
+
     #Now, if user have choosen to retrain RBMs, we train new RBMs from the datasets previously generated. Else, we just reload RBMs from pkl files
     rbms = []
     for index_rbm in range(5):
         rbm_filename = "Pretrain_RBM_" + str(index_rbm) + ".pkl"
         if (retrain_rbms) :
-            rbm = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch)
+            rbm, cost_tab = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
+                                             learning_rate = rbm_learning_rate, batch_size=batch_size, n_hidden=rbm_n_hidden)
             rbms.append(rbm)
+            plt.plot(x,cost_tab, label="RBM"+str(index_rbm))
             with open(rbm_filename, 'w') as f:
                 cPickle.dump(rbm, f)
         else :
             rbm = cPickle.load(open(rbm_filename))
             rbms.append(rbm)
+    #save plot (name depend of time)
+    if (retrain_rbms) :
+        plt.legend(loc=4)
+        plot_name = 'plot/rbm_'+str(timeit.default_timer())+'.png'
+        plt.savefig(plot_name)
+        print "RBMs plot is saved!"
     #The next step is to generate a new dataset in order to train the CRBM. To do that, we realize a propagation-up of previous dataset in RBMs
     dataname = ['dataset_train.pkl','dataset_valid.pkl','dataset_test.pkl']
     labelname = ['labelset_train.pkl','labelset_valid.pkl','labelset_test.pkl']
