@@ -1,10 +1,10 @@
 """
 Theano Temporal Deep Belief Network implementation (TDBN) used for temporal pattern recognition
-This model based on Sukhbataar paper :
+This model based on Sukhbaatar paper :
 Robust generation of dynamical patterns in human motion by a deep belief nets
 [http://jmlr.csail.mit.edu/proceedings/papers/v20/sukhbaatar11/sukhbaatar11.pdf]
 
-Sukhbataar uses this model for gesture generation. In our case, TDBNs used for gesture recognition.
+Sukhbaatar uses this model for gesture generation. In our case, TDBNs used for gesture recognition.
 To do that, we stacked a regressive layer on top of a TDBN, a new layer who is in charge of supervised.
 
 @author Francois Lasson : CERV Brest France
@@ -147,11 +147,13 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      number_hidden_crbm = 50, n_label=3, crbm_pretraining_epoch = 10000, finetune_epoch = 10000):
+                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
+                      finetune_epoch = 100, finetune_learning_rate = 0.1, log_n_label=9):
+
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
-    retrain_rbms = True
-    regenerate_crbm_dataset = True
+    retrain_rbms = False
+    regenerate_crbm_dataset = False
     retrain_crbm = True
 
     #First step : generate dataset from files
@@ -172,10 +174,10 @@ def create_train_tdbn(training_files=None, training_labels = None,
     for index_rbm in range(5):
         rbm_filename = "Pretrain_RBM_" + str(index_rbm) + ".pkl"
         if (retrain_rbms) :
-            rbm, cost_tab = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
+            rbm, cost_rbms = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
                                              learning_rate = rbm_learning_rate, batch_size=batch_size, n_hidden=rbm_n_hidden)
             rbms.append(rbm)
-            plt.plot(x,cost_tab, label="RBM"+str(index_rbm))
+            plt.plot(x,cost_rbms, label="RBM"+str(index_rbm))
             with open(rbm_filename, 'w') as f:
                 cPickle.dump(rbm, f)
         else :
@@ -187,6 +189,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
         plot_name = 'plot/rbm_'+str(timeit.default_timer())+'.png'
         plt.savefig(plot_name)
         print "RBMs plot is saved!"
+        plt.clf() #without this line, all is plot in the same figure
+        plt.close()
     #The next step is to generate a new dataset in order to train the CRBM. To do that, we realize a propagation-up of previous dataset in RBMs
     dataname = ['dataset_train.pkl','dataset_valid.pkl','dataset_test.pkl']
     labelname = ['labelset_train.pkl','labelset_valid.pkl','labelset_test.pkl']
@@ -241,12 +245,36 @@ def create_train_tdbn(training_files=None, training_labels = None,
         shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
         shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
     #At this step, we have enough elements to create a logistic regressive CRBM
-    log_crbm = create_train_LogisticCrbm(
+    log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
                                 dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
                                 dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
                                 dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
-                                number_hidden_crbm = number_hidden_crbm, n_label = n_label, retrain_crbm = retrain_crbm,
-                                pretraining_epochs=crbm_pretraining_epoch, training_epochs=finetune_epoch)
+                                batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
+                                training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
+    #Plot CRBM cost evolution
+    if (retrain_crbm) :
+        title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
+        plt.title(title)
+        plt.ylabel("Cost")
+        plt.xlabel("Epoch")
+        x = xrange(crbm_training_epoch)
+        plt.plot(x,cost_crbm)
+        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'FinalCost_'+str(cost_crbm[-1])+'.png'
+        plt.savefig(plot_name)
+        print "CRBM plot is saved!"
+        plt.clf() #without this line, all is plot in the same figure
+        plt.close()
+    #Plot PER evolution
+    title = "PER on test set: \nepoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
+    plt.title(title)
+    plt.ylabel("PER")
+    plt.xlabel("Epoch")
+    plt.plot(PER_x,PER_y)
+    plot_name = 'plot/PER_'+str(timeit.default_timer())+'FinalPER_'+str(PER_y[-1])+'.png'
+    plt.savefig(plot_name)
+    print "PER plot is saved!"
+    plt.clf() #without this line, all is plot in the same figure
+    plt.close()
     #Get training time to inform user
     end_time = timeit.default_timer()
     pretraining_time = (end_time - start_time)
@@ -301,8 +329,7 @@ if __name__ == '__main__':
         tdbn = create_train_tdbn(
                             training_files = training_files, training_labels = training_labels,
                             validation_files= validation_files, validation_labels = validation_labels,
-                            test_files = test_files, test_labels = test_labels,
-                            number_hidden_crbm = 15, n_label = 9)
+                            test_files = test_files, test_labels = test_labels)
         #save our network
         with open('best_model_tdbn.pkl', 'w') as f:
             cPickle.dump(tdbn, f)

@@ -298,7 +298,7 @@ class CRBM(object):
                 name='train_crbm')
 
         start_time = timeit.default_timer()
-
+        cost_y = []
         # go through training epochs
         for epoch in xrange(training_epochs):
 
@@ -318,9 +318,11 @@ class CRBM(object):
                 #print batch_index, this_cost
                 mean_cost += [this_cost]
             print 'Training epoch %d, cost is ' % epoch, np.mean(mean_cost)
+            cost_y.append(np.mean(mean_cost))
         end_time = timeit.default_timer()
         pretraining_time = (end_time - start_time)
         print ('Training took %f minutes' % (pretraining_time / 60.))
+        return cost_y
 
 
     def predict_hidden(self, dataset=None, batch_size=100):

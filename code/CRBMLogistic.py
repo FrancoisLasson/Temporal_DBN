@@ -253,7 +253,7 @@ def create_train_LogisticCrbm(
                     dataset_train=None, labelset_train=None, seqlen_train = None,
                     dataset_validation=None, labelset_validation=None, seqlen_validation = None,
                     dataset_test=None, labelset_test=None, seqlen_test = None,
-                    batch_size=100, number_hidden_crbm=50, n_label=3, retrain_crbm = True):
+                    batch_size=100, number_hidden_crbm=50, n_delay=6, n_label=3, retrain_crbm = True):
 
     #get datain dimension in order to set CRBM input size
     n_dim = dataset_train.get_value(borrow=True).shape[1]
@@ -267,12 +267,13 @@ def create_train_LogisticCrbm(
     # PRETRAINING THE MODEL # # for test, it's also possible to reload it
     #########################
     if (retrain_crbm):
-        log_crbm = LOGISTIC_CRBM(numpy_rng=numpy_rng, n_input=n_dim, n_label = n_label, n_hidden=number_hidden_crbm)
+        log_crbm = LOGISTIC_CRBM(numpy_rng=numpy_rng, n_input=n_dim, n_label = n_label, n_hidden=number_hidden_crbm, n_delay=n_delay)
         print '... pre-training the model'
-        log_crbm.crbm_layer.train(learning_rate=pretrain_lr, training_epochs=pretraining_epochs, dataset=dataset_train, seqlen= seqlen_train, batch_size=batch_size)
+        cost_crbm = log_crbm.crbm_layer.train(learning_rate=pretrain_lr, training_epochs=pretraining_epochs, dataset=dataset_train, seqlen= seqlen_train, batch_size=batch_size)
         with open('best_log_crbm.pkl', 'w') as f:
             cPickle.dump(log_crbm, f)
     else :
+        cost_crbm = None
         log_crbm = cPickle.load(open('best_log_crbm.pkl'))
         print '... model is pre-trained'
 
@@ -319,6 +320,10 @@ def create_train_LogisticCrbm(
         last += s
         permindex = np.array(datasetindex)
 
+    #PER_x and PER_y are two variables used to plot PER evolution
+    PER_y = []
+    PER_x = []
+
     while (epoch < training_epochs) and (not done_looping): #TODO supprimer le not done_looping pour forcer le bouclage?
         epoch = epoch + 1
         for minibatch_index in xrange(n_train_batches):
@@ -359,6 +364,8 @@ def create_train_LogisticCrbm(
                            'best model %f %%') %
                           (epoch, minibatch_index + 1, n_train_batches,
                            test_score * 100.))
+                    PER_x.append(epoch)
+                    PER_y.append(test_score * 100.)
             #if patience <= iter:
                 #done_looping = True
                 #break
@@ -372,7 +379,7 @@ def create_train_LogisticCrbm(
         ) % (best_validation_loss * 100., best_iter + 1, test_score * 100.)
     )
     print ("The fine tuning ran for %.2fm" % ((end_time - start_time)/ 60.))
-    return log_crbm
+    return log_crbm, cost_crbm, PER_x, PER_y
 
 
 
