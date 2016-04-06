@@ -147,8 +147,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
-                      finetune_epoch = 100, finetune_learning_rate = 0.1, log_n_label=9):
+                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
+                      finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
@@ -172,7 +172,7 @@ def create_train_tdbn(training_files=None, training_labels = None,
     #Now, if user have choosen to retrain RBMs, we train new RBMs from the datasets previously generated. Else, we just reload RBMs from pkl files
     rbms = []
     for index_rbm in range(5):
-        rbm_filename = "Pretrain_RBM_" + str(index_rbm) + ".pkl"
+        rbm_filename = "trained_model/Pretrain_RBM_" + str(index_rbm) + ".pkl"
         if (retrain_rbms) :
             rbm, cost_rbms = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
                                              learning_rate = rbm_learning_rate, batch_size=batch_size, n_hidden=rbm_n_hidden)
@@ -192,8 +192,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
         plt.clf() #without this line, all is plot in the same figure
         plt.close()
     #The next step is to generate a new dataset in order to train the CRBM. To do that, we realize a propagation-up of previous dataset in RBMs
-    dataname = ['dataset_train.pkl','dataset_valid.pkl','dataset_test.pkl']
-    labelname = ['labelset_train.pkl','labelset_valid.pkl','labelset_test.pkl']
+    dataname = ['trained_model/dataset_train.pkl','trained_model/dataset_valid.pkl','trained_model/dataset_test.pkl']
+    labelname = ['trained_model/labelset_train.pkl','trained_model/labelset_valid.pkl','trained_model/labelset_test.pkl']
     if(regenerate_crbm_dataset):
         #In fact, we have to generate three dataset : one for training phase, one for validation and one for test
         for i in range(3):
@@ -331,13 +331,13 @@ if __name__ == '__main__':
                             validation_files= validation_files, validation_labels = validation_labels,
                             test_files = test_files, test_labels = test_labels)
         #save our network
-        with open('best_model_tdbn.pkl', 'w') as f:
+        with open('trained_model/best_model_tdbn.pkl', 'w') as f:
             cPickle.dump(tdbn, f)
 
     #Else, you have already trained a TDBN and you want to test it
     else :
         print "Load TDBN..."
-        tdbn = cPickle.load(open('best_model_tdbn.pkl'))
+        tdbn = cPickle.load(open('trained_model/best_model_tdbn.pkl'))
         print "TDBN loaded from file."
         #tdbn.recognize_file_with_minibatch('data/geste2h.bvh', 0) #Minibatch
         tdbn.recognize_files_frame_by_frame(test_files, test_labels) #frame after frame

@@ -270,11 +270,11 @@ def create_train_LogisticCrbm(
         log_crbm = LOGISTIC_CRBM(numpy_rng=numpy_rng, n_input=n_dim, n_label = n_label, n_hidden=number_hidden_crbm, n_delay=n_delay)
         print '... pre-training the model'
         cost_crbm = log_crbm.crbm_layer.train(learning_rate=pretrain_lr, training_epochs=pretraining_epochs, dataset=dataset_train, seqlen= seqlen_train, batch_size=batch_size)
-        with open('best_log_crbm.pkl', 'w') as f:
+        with open('trained_model/best_log_crbm.pkl', 'w') as f:
             cPickle.dump(log_crbm, f)
     else :
         cost_crbm = None
-        log_crbm = cPickle.load(open('best_log_crbm.pkl'))
+        log_crbm = cPickle.load(open('trained_model/best_log_crbm.pkl'))
         print '... model is pre-trained'
 
     ########################
@@ -385,6 +385,4 @@ def create_train_LogisticCrbm(
 
 
 if __name__ == '__main__':
-    log_crbm = create_train_LogisticCrbm()
-    with open('best_model_log_crbm.pkl', 'w') as f:
-        cPickle.dump(log_crbm, f)
+    print "nothing to do, launch python code/tdbn.py"
