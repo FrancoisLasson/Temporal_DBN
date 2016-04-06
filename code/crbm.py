@@ -309,9 +309,7 @@ class CRBM(object):
                 # indexing is slightly complicated
                 # build a linear index to the starting frames for this batch
                 # (i.e. time t) gives a batch_size length array for data
-                data_idx = permindex[batch_index * batch_size:(batch_index + 1) \
-                                     * batch_size]
-
+                data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size]
                 # now build a linear index to the frames at each delay tap
                 # (i.e. time t-1 to t-delay)
                 # gives a batch_size x delay array of indices for history

@@ -366,7 +366,7 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
     n_dim = dataset.get_value(borrow=True).shape[1] #number of data in each frames
 
     # allocate symbolic variables for the data
-    index = T.lscalar()    # index to a [mini]batch
+    index = T.lvector() # list of index : shuffle data
     x = T.matrix('x')  # the data : matrix cos to minibatch?
 
     # initialize storage for the persistent chain (state = hidden
@@ -389,12 +389,21 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
         [index], #minibatch index
         cost,
         updates=updates,
-        givens={ x: dataset[index * batch_size: (index + 1) * batch_size]}, #for the [index]minibatch
+        givens={ x: dataset[index]}, #for the [index]minibatch
         name='train_rbm'
     )
 
     plotting_time = 0.
     start_time = timeit.default_timer()
+    #shuffle data : Learn gesture after gesture could introduce a bias. In order to avoid this,
+    #we shuffle data to learn all gestures at the same time
+    datasetindex = []
+    last = 0
+    for s in seqlen:
+        datasetindex += range(last, last + s)
+        last += s
+    permindex = numpy.array(datasetindex)
+    rng.shuffle(permindex)
 
     #In order visualize cost evolution during training phase
     cost_y = []
@@ -403,7 +412,8 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
         # go through the training set
         mean_cost = []
         for batch_index in xrange(n_train_batches): #for each minibatch
-            mean_cost += [train_rbm(batch_index)]
+            data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size] #get a list of index in the shuffle index-list
+            mean_cost += [train_rbm(data_idx)]
         print 'Training epoch %d, cost is ' % epoch, numpy.mean(mean_cost)
         cost_y.append(numpy.mean(mean_cost))
 
