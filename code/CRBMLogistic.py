@@ -62,7 +62,8 @@ class LOGISTIC_CRBM(object):
             numpy_rng = np.random.RandomState(1234)
         if not theano_rng:
             theano_rng = MRG_RandomStreams(numpy_rng.randint(2 ** 30))
-
+        self.numpy_rng = numpy_rng
+        self.theano_rng = theano_rng
 
         # allocate symbolic variables for the data
         self.x = T.matrix('x')  # the data is presented as rasterized images
@@ -175,6 +176,7 @@ class LOGISTIC_CRBM(object):
                 datasetindex += range(last + self.delay, last + s)
                 last += s
             permindex = np.array(datasetindex)
+            self.numpy_rng.shuffle(permindex)
             valid_score_out = []
             for batch_index in xrange(n_valid_batches):
                 data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size]
@@ -190,6 +192,7 @@ class LOGISTIC_CRBM(object):
                 datasetindex += range(last + self.delay, last + s)
                 last += s
             permindex = np.array(datasetindex)
+            self.numpy_rng.shuffle(permindex)
             test_score_out = []
             for batch_index in xrange(n_test_batches):
                 data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size]
@@ -319,6 +322,7 @@ def create_train_LogisticCrbm(
         datasetindex += range(last + log_crbm.delay, last + s)
         last += s
         permindex = np.array(datasetindex)
+    numpy_rng.shuffle(permindex)
 
     #PER_x and PER_y are two variables used to plot PER evolution
     PER_y = []
