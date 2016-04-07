@@ -147,8 +147,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
-                      finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
+                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
+                      finetune_epoch = 10, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
@@ -244,22 +244,46 @@ def create_train_tdbn(training_files=None, training_labels = None,
     for i in range(3):
         shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
         shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
-    #At this step, we have enough elements to create a logistic regressive CRBM
-    log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
-                                dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
-                                dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
-                                dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
-                                batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
-                                training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
-    #Plot CRBM cost evolution
-    if (retrain_crbm) :
-        title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
-        plt.title(title)
-        plt.ylabel("Cost")
-        plt.xlabel("Epoch")
-        x = xrange(crbm_training_epoch)
-        plt.plot(x,cost_crbm)
-        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'FinalCost_'+str(cost_crbm[-1])+'.png'
+
+
+    #config for test
+    crbm_learning_rate_tab = [1e-2, 1e-3, 1e-4]
+    crbm_n_hidden_tab = [15,50,150]
+    crbm_n_delay_tab = [3,6,9]
+    for experiment_index in range(3):
+        #Basic config
+        crbm_learning_rate = crbm_learning_rate_tab[0]
+        crbm_n_hidden = crbm_n_hidden_tab[0]
+        crbm_n_delay = crbm_n_delay_tab[0]
+        for in_experiment_index in range(3):
+            if(experiment_index==0):
+                crbm_learning_rate = crbm_learning_rate_tab[in_experiment_index]
+                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; n_past_visible :"+str(crbm_n_delay)
+                label_expe = "CRBM lr="+str(crbm_learning_rate)
+            elif(experiment_index==1):
+                crbm_n_hidden = crbm_n_hidden_tab[in_experiment_index]
+                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
+                label_expe = "CRBM n_hidden="+str(crbm_n_hidden)
+            else :
+                crbm_n_delay = crbm_n_delay_tab[in_experiment_index]
+                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)
+                label_expe = "CRBM n_delay="+str(crbm_n_delay)
+            #At this step, we have enough elements to create a logistic regressive CRBM
+            log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
+                                        dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
+                                        dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
+                                        dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
+                                        batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
+                                        training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
+            #Plot CRBM cost evolution
+
+            plt.title(title)
+            plt.ylabel("Cost")
+            plt.xlabel("Epoch")
+            x = xrange(crbm_training_epoch)
+            plt.plot(x,cost_crbm, label=label_expe)
+        plt.legend(loc=1)
+        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'expe_number_'+str(experiment_index)+'.png'
         plt.savefig(plot_name)
         print "CRBM plot is saved!"
         plt.clf() #without this line, all is plot in the same figure
