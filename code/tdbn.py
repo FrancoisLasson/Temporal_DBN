@@ -15,6 +15,7 @@ To do that, we stacked a regressive layer on top of a TDBN, a new layer who is i
 import numpy as np
 #Import pyPlot to display cost evolution during learning phase
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as font_manager
 import theano
 import theano.tensor as T
 #Use to compute learning time
@@ -147,8 +148,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
-                      finetune_epoch = 10, finetune_learning_rate = 0.1, log_n_label=9):
+                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
+                      finetune_epoch = 20000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
@@ -245,60 +246,72 @@ def create_train_tdbn(training_files=None, training_labels = None,
         shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
         shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
 
+    #CRBMs :
+    finetune_epoch = 20000
+    crbm_training_epoch_tab = [15000, 2500, 5000, 10000, 50000]
+    crbm_learning_rate_tab = [1e-3, 1e-1, 1e-2, 1e-4]
+    crbm_n_hidden_tab = [30, 15, 50, 150, 300]
+    crbm_n_delay_tab = [6, 2, 3, 9, 15]
+    experiments = [crbm_training_epoch_tab, crbm_learning_rate_tab, crbm_n_hidden_tab, crbm_n_delay_tab]
 
-    #config for test
-    crbm_learning_rate_tab = [1e-2, 1e-3, 1e-4]
-    crbm_n_hidden_tab = [15,50,150]
-    crbm_n_delay_tab = [3,6,9]
-    for experiment_index in range(3):
-        #Basic config
+    for experiment_index in range(len(experiments)):
+        #Basic config : reinitialize
+        crbm_training_epoch = crbm_training_epoch_tab[0]
         crbm_learning_rate = crbm_learning_rate_tab[0]
         crbm_n_hidden = crbm_n_hidden_tab[0]
         crbm_n_delay = crbm_n_delay_tab[0]
-        for in_experiment_index in range(3):
+
+        for in_experiment_index in range(len(experiments[experiment_index])):
             if(experiment_index==0):
-                crbm_learning_rate = crbm_learning_rate_tab[in_experiment_index]
-                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; n_past_visible :"+str(crbm_n_delay)
-                label_expe = "CRBM lr="+str(crbm_learning_rate)
+                #epoch
+                crbm_training_epoch = crbm_training_epoch_tab[in_experiment_index]
+                title = "Pre-training : learning rate="+str(crbm_learning_rate)+ \
+                        "; n_hidden= "+str(crbm_n_hidden)+"; n_past_visible :"+str(crbm_n_delay)
+                label_expe = "CRBM epoch="+str(crbm_training_epoch)
             elif(experiment_index==1):
+                #learning_rate
+                crbm_learning_rate = crbm_learning_rate_tab[in_experiment_index]
+                title = "Pre-training : epoch="+str(crbm_training_epoch)+ \
+                        "; n_hidden= "+str(crbm_n_hidden)+"; n_past_visible :"+str(crbm_n_delay)
+                label_expe = "CRBM lr="+str(crbm_learning_rate)
+            elif(experiment_index==2):
+                #nb hidden layers
                 crbm_n_hidden = crbm_n_hidden_tab[in_experiment_index]
-                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
+                title = "Pre-training : epoch="+str(crbm_training_epoch)+ \
+                        "; learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
                 label_expe = "CRBM n_hidden="+str(crbm_n_hidden)
             else :
+                #nb delay, past visible layers
                 crbm_n_delay = crbm_n_delay_tab[in_experiment_index]
-                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)
+                title = "Pre-training : epoch="+str(crbm_training_epoch)+\
+                        "; n_hidden= "+str(crbm_n_hidden)+"; learning rate="+str(crbm_learning_rate)
                 label_expe = "CRBM n_delay="+str(crbm_n_delay)
+
             #At this step, we have enough elements to create a logistic regressive CRBM
-            log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
+            log_crbm, cost_crbm, PER_x_valid,PER_y_valid,PER_x_test,PER_y_test = create_train_LogisticCrbm(
                                         dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
                                         dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
                                         dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
                                         batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
                                         training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
-            #Plot CRBM cost evolution
-
-            plt.title(title)
-            plt.ylabel("Cost")
-            plt.xlabel("Epoch")
-            x = xrange(crbm_training_epoch)
-            plt.plot(x,cost_crbm, label=label_expe)
-        plt.legend(loc=1)
-        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'expe_number_'+str(experiment_index)+'.png'
+            #Plot CRBM influence PER evolution
+            font = {'size':'11'}
+            title += "\nFine-tuning : epoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
+            plt.subplot(211)
+            plt.title(title, **font)
+            plt.ylabel("PER_validation")
+            plt.plot(PER_x_valid,PER_y_valid, label=label_expe)
+            plt.legend(loc=1, prop={'size':7})
+            plt.subplot(212)
+            plt.ylabel("PER_test")
+            plt.xlabel("epoch")
+            plt.plot(PER_x_test,PER_y_test, label=label_expe)
+            plt.legend(loc=1, prop={'size':7})
+        plot_name = 'plot/PER_crbm_'+str(timeit.default_timer())+'expe_number_'+str(experiment_index)+'.png'
         plt.savefig(plot_name)
-        print "CRBM plot is saved!"
+        print "CRBM PER plot is saved!"
         plt.clf() #without this line, all is plot in the same figure
         plt.close()
-    #Plot PER evolution
-    title = "PER on test set: \nepoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
-    plt.title(title)
-    plt.ylabel("PER")
-    plt.xlabel("Epoch")
-    plt.plot(PER_x,PER_y)
-    plot_name = 'plot/PER_'+str(timeit.default_timer())+'FinalPER_'+str(PER_y[-1])+'.png'
-    plt.savefig(plot_name)
-    print "PER plot is saved!"
-    plt.clf() #without this line, all is plot in the same figure
-    plt.close()
     #Get training time to inform user
     end_time = timeit.default_timer()
     pretraining_time = (end_time - start_time)
