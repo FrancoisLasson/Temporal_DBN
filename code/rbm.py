@@ -346,6 +346,65 @@ class RBM(object):
         f = theano.function([visible], hidden_sample) #sample with a binomial
         return f(frame)
 
+    def train(self, learning_rate=1e-3, training_epochs=5000,
+              dataset=None, seqlen = None, batch_size=20) :
+        # compute number of minibatches for training, validation and testing
+        n_train_batches = dataset.get_value(borrow=True).shape[0] / batch_size #number of minibatch
+        n_dim = dataset.get_value(borrow=True).shape[1] #number of data in each frames
+
+        # allocate symbolic variables for the data
+        index = T.lvector() # list of index : shuffle data
+        x = T.matrix('x')  # the data : matrix cos to minibatch?
+
+        # initialize storage for the persistent chain (state = hidden
+        # layer of chain)
+        persistent_chain = theano.shared(numpy.zeros((batch_size, n_hidden), dtype=theano.config.floatX), borrow=True)
+        # get the cost and the gradient corresponding to one step of CD-15
+        cost, updates = self.get_cost_updates(lr=learning_rate, persistent=persistent_chain, k=1)
+
+        #################################
+        #     Training the RBM          #
+        #################################
+
+        # it is ok for a theano function to have no output
+        # the purpose of train_rbm is solely to update the RBM parameters
+        train_rbm = theano.function(
+            [index], #minibatch index
+            cost,
+            updates=updates,
+            givens={ x: dataset[index]}, #for the [index]minibatch
+            name='train_rbm'
+        )
+
+        plotting_time = 0.
+        start_time = timeit.default_timer()
+        #shuffle data : Learn gesture after gesture could introduce a bias. In order to avoid this,
+        #we shuffle data to learn all gestures at the same time
+        datasetindex = []
+        last = 0
+        for s in seqlen:
+            datasetindex += range(last, last + s)
+            last += s
+        permindex = numpy.array(datasetindex)
+        rng.shuffle(permindex)
+
+        #In order visualize cost evolution during training phase
+        cost_y = []
+        # go through training epochs
+        for epoch in xrange(training_epochs):
+            # go through the training set
+            mean_cost = []
+            for batch_index in xrange(n_train_batches): #for each minibatch
+                data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size] #get a list of index in the shuffle index-list
+                mean_cost += [train_rbm(data_idx)]
+            print 'Training epoch %d, cost is ' % epoch, numpy.mean(mean_cost)
+            cost_y.append(numpy.mean(mean_cost))
+
+        end_time = timeit.default_timer()
+        pretraining_time = (end_time - start_time) - plotting_time
+        print ('RBM : Training took %f minutes' % (pretraining_time / 60.))
+        return cost_y
+
 
 def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
              dataset=None, seqlen = None, batch_size=20, n_hidden=30):
@@ -376,50 +435,8 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
     # construct the RBM class
     rbm = RBM(input=x, n_visible=n_dim, n_hidden=n_hidden, numpy_rng=rng, theano_rng=theano_rng)
 
-    # get the cost and the gradient corresponding to one step of CD-15
-    cost, updates = rbm.get_cost_updates(lr=learning_rate, persistent=persistent_chain, k=1)
-
-    #################################
-    #     Training the RBM          #
-    #################################
-
-    # it is ok for a theano function to have no output
-    # the purpose of train_rbm is solely to update the RBM parameters
-    train_rbm = theano.function(
-        [index], #minibatch index
-        cost,
-        updates=updates,
-        givens={ x: dataset[index]}, #for the [index]minibatch
-        name='train_rbm'
-    )
-
-    plotting_time = 0.
-    start_time = timeit.default_timer()
-    #shuffle data : Learn gesture after gesture could introduce a bias. In order to avoid this,
-    #we shuffle data to learn all gestures at the same time
-    datasetindex = []
-    last = 0
-    for s in seqlen:
-        datasetindex += range(last, last + s)
-        last += s
-    permindex = numpy.array(datasetindex)
-    rng.shuffle(permindex)
-
-    #In order visualize cost evolution during training phase
-    cost_y = []
-    # go through training epochs
-    for epoch in xrange(training_epochs):
-        # go through the training set
-        mean_cost = []
-        for batch_index in xrange(n_train_batches): #for each minibatch
-            data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size] #get a list of index in the shuffle index-list
-            mean_cost += [train_rbm(data_idx)]
-        print 'Training epoch %d, cost is ' % epoch, numpy.mean(mean_cost)
-        cost_y.append(numpy.mean(mean_cost))
-
-    end_time = timeit.default_timer()
-    pretraining_time = (end_time - start_time) - plotting_time
-    print ('RBM : Training took %f minutes' % (pretraining_time / 60.))
+    cost_y = rbm.train(learning_rate=learning_rate, training_epochs=training_epochs,
+                        dataset=dataset, seqlen = seqlen, batch_size=batch_size)
     return rbm, cost_y
 
 

@@ -1,7 +1,8 @@
 """
-This class implement a Conditional RBM, a temporal generative model
+This class implement a Discriminative Conditional RBM, a temporal Discriminative model
 To understand this model : Taylor http://www.uoguelph.ca/~gwtaylor/publications/nips2006mhmublv/
 Taylor Github : https://gist.github.com/gwtaylor/2505670 (CRBM theano implementation without modification)
+and Jerome LOURADOUR & Hugo LAROCHELLE _ Classification of sets using Restricted Boltzmann Machines
 @author Graham W. Taylor
 
 @modification Francois Lasson : CERV Brest France
@@ -22,11 +23,11 @@ import timeit
 from motion import generate_dataset #to load mocap
 
 
-class CRBM(object):
-    """Conditional Restricted Boltzmann Machine (CRBM)  """
-    def __init__(self, input=None, input_history=None,
-                n_visible=49, n_hidden=15, delay=6,
-                A=None, B=None, W=None, hbias=None, vbias=None,
+class DCRBM(object):
+    """Discriminative Conditional Restricted Boltzmann Machine (DCRBM)  """
+    def __init__(self, input=None, input_history=None, label=None,
+                n_visible=49, n_hidden=15, n_label=9, delay=6,
+                A=None, B=None, W=None, U=None, hbias=None, vbias=None, lbias=None,
                 numpy_rng=None, theano_rng=None):
         """
         CRBM constructor. Defines the parameters of the model along with
@@ -40,29 +41,39 @@ class CRBM(object):
 
         :param n_hidden: number of hidden units
 
-        :param A: None for standalone CRBMs or symbolic variable pointing to a
+        :param n_label: number of label units
+
+        :param A: None for standalone DCRBMs or symbolic variable pointing to a
         shared weight matrix in case CRBM is part of a CDBN network; in a CDBN,
         the weights are shared between CRBMs and layers of a MLP
 
-        :param B: None for standalone CRBMs or symbolic variable pointing to a
+        :param B: None for standalone DCRBMs or symbolic variable pointing to a
         shared weight matrix in case CRBM is part of a CDBN network; in a CDBN,
         the weights are shared between CRBMs and layers of a MLP
 
-        :param W: None for standalone CRBMs or symbolic variable pointing to a
+        :param W: None for standalone DCRBMs or symbolic variable pointing to a
         shared weight matrix in case CRBM is part of a CDBN network; in a CDBN,
         the weights are shared between CRBMs and layers of a MLP
 
-        :param hbias: None for standalone CRBMs or symbolic variable pointing
+        :param U: None for standalone DCRBMs or symbolic variable pointing to a
+        shared weight matrix in case CRBM is part of a CDBN network; in a CDBN,
+        the weights are shared between CRBMs and layers of a MLP
+
+        :param hbias: None for standalone DCRBMs or symbolic variable pointing
         to a shared hidden units bias vector in case CRBM is part of a
         different network
 
-        :param vbias: None for standalone RBMs or a symbolic variable
+        :param vbias: None for standalone DCRBMs or a symbolic variable
         pointing to a shared visible units bias
+
+        :param lbias: None for standalone DCRBMs or a symbolic variable
+        pointing to a shared label units bias
         """
 
         #Initialize architecture (number of layers, of neurones)
         self.n_visible = n_visible #number of neurones in visible layer
         self.n_hidden = n_hidden #number of neurones in hidden layer
+        self.n_label = n_label
         self.delay = delay #number of past visible layers
 
         #Initialize seed for random
@@ -81,6 +92,12 @@ class CRBM(object):
                                     dtype=theano.config.floatX)
             # theano shared variables for weights and biases
             W = theano.shared(value=initial_W, name='W')
+        if U is None:
+            initial_U = np.asarray(0.01 * numpy_rng.randn(n_label,
+                                                          n_hidden),
+                                    dtype=theano.config.floatX)
+            # theano shared variables for weights and biases
+            U = theano.shared(value=initial_U, name='U')
         if A is None:
             initial_A = np.asarray(0.01 * numpy_rng.randn(n_visible * delay,
                                                            n_visible),
@@ -101,23 +118,32 @@ class CRBM(object):
             # create shared variable for visible units bias
             vbias = theano.shared(value=np.zeros(n_visible,
                                 dtype=theano.config.floatX), name='vbias')
+        if lbias is None:
+            # create shared variable for visible units bias
+            lbias = theano.shared(value=np.zeros(n_label,
+                                dtype=theano.config.floatX), name='lbias')
 
         # initialize input layer for standalone CRBM or layer0 of CDBN
-        if input is None:
-            self.input = T.matrix('input')
         self.input = input
-        if input_history is None:
-            self.input_history = T.matrix('input_history')
+        if not input:
+            self.input = T.matrix('input')
         self.input_history = input_history
+        if not input_history:
+            self.input_history = T.matrix('input_history')
+        self.label = label
+        if not label:
+            self.label = T.lvector('label')
 
         self.W = W
         self.A = A
         self.B = B
+        self.U = U
         self.hbias = hbias
         self.vbias = vbias
+        self.lbias = lbias
         self.theano_rng = theano_rng
         self.numpy_rng = numpy_rng
-        self.params = [self.W, self.A, self.B, self.hbias, self.vbias]
+        self.params = [self.W, self.A, self.B, self.U, self.hbias, self.vbias, self.lbias]
 
     def free_energy(self, v_sample, v_history):
         ''' Function to compute the free energy of a sample conditional

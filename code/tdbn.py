@@ -15,8 +15,12 @@ To do that, we stacked a regressive layer on top of a TDBN, a new layer who is i
 import numpy as np
 #Import pyPlot to display cost evolution during learning phase
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as font_manager
 import theano
 import theano.tensor as T
+#theano Random
+from theano.sandbox.rng_mrg import MRG_RandomStreams
+from theano.tensor.shared_randomstreams import RandomStreams
 #Use to compute learning time
 import timeit
 #Use to save trained model or dataset
@@ -27,17 +31,67 @@ from motion import generate_dataset
 from rbm import RBM, create_train_rbm
 #Import CRBMLogistic Class, upper level of TDBN (CRBM+Logistic regressive layer)
 from CRBMLogistic import LOGISTIC_CRBM, create_train_LogisticCrbm
+#Import classes for crbm and logistic regression layer
+from crbm import CRBM
+from logistic_sgd import LogisticRegression
 
 
 class TDBN(object):
     """ Structure of a Temporal Deep Belief Network used for discrimination (TDBN)
     For rbms, indexes are the following : 0 = trunk; 1 = left arm; 2 = right Arm; 3 = left leg; 4 = right leg"""
-    def __init__(self, rbms=None, log_crbm = None):
-        #A TDBN is composed of five RBMs which are used to extract spatial features (Cf RBM class)
-        self.rbms = [rbms[0],rbms[1],rbms[2],rbms[3],rbms[4]] #TODO Errror if self.rbms = [] then loop for due to length of list, tdbn.pkg become too huge
-        #At the top, there is a CRBM (Conditional RBM) combined with a Logistic regressive. The CRBM is used for temporal features extraction. For its part, the Logistic regressive
-        #allow us to work with labeled datas, in other word, to do a supervised training. (Cf CRBMLogistic Class)
-        self.log_crbm = log_crbm
+    def __init__(self,numpy_rng=None, theano_rng=None,
+                 n_rbm_visibles = [15, 12, 12, 12, 12], n_rbm_hiddens = [30, 30, 30, 30, 30],
+                 n_crbm_hidden=50, n_crbm_delay=6,
+                 n_label = 9):
+
+        self.rbms_layers = []
+        self.params = []
+
+        self.inputRBMs = [T.matrix('inputRBM_0'), T.matrix('inputRBM_1'),
+                          T.matrix('inputRBM_2'), T.matrix('inputRBM_3'), T.matrix('inputRBM_4')]
+        self.historyCRBM = T.matrix('historyCRBM')
+        self.label = T.ivector('label')
+
+
+        if numpy_rng is None:
+            numpy_rng = np.random.RandomState(1234)
+        if theano_rng is None:
+            theano_rng = MRG_RandomStreams(numpy_rng.randint(2 ** 30))
+
+        #RBMs
+        for index_rbms in range(5):
+            rbm_layer = RBM(numpy_rng=numpy_rng, theano_rng=theano_rng,
+                            input=self.inputRBMs[index_rbms], n_visible=n_rbm_visibles[index_rbms],
+                            n_hidden=n_rbm_hiddens[index_rbms])
+            self.rbms_layers.append(rbm_layer)
+            self.params.append(rbm_layer.W)
+            self.params.append(rbm_layer.hbias)
+
+        #CRBM
+        hidden_rbms = []
+        for index_rbms in range(5):
+            hidden_rbms.append(T.nnet.sigmoid(T.dot(self.inputRBMs[index_rbms], self.rbms_layers[index_rbms].W)+ self.rbms_layers[index_rbms].hbias))
+        crbm_input = np.concatenate((hidden_rbms[0], hidden_rbms[1], hidden_rbms[2], hidden_rbms[3], hidden_rbms[4]), axis=0)
+        n_crbm_input = len(crbm_input)
+        self.crbm_layer = CRBM(numpy_rng=numpy_rng, theano_rng=theano_rng,
+                               input=crbm_input, input_history = self.historyCRBM,
+                               n_visible=n_crbm_input, n_hidden=n_crbm_hidden, delay =n_crbm_delay)
+        self.params.append(self.crbm_layer.W)
+        self.params.append(self.crbm_layer.B)
+        self.params.append(self.crbm_layer.hbias)
+
+        #Logistic regressive
+        input_logistic = T.nnet.sigmoid(T.dot(crbm_input, self.crbm_layer.W)+ T.nnet.sigmoid(T.dot(self.historyCRBM, self.crbm_layer.B) + self.crbm_layer.hbias))
+        self.logLayer = LogisticRegression(
+            input=input_logistic,
+            n_in=n_crbm_hidden,
+            n_out=n_label)
+        self.params.extend(self.logLayer.params)
+
+        self.finetune_cost = self.logLayer.negative_log_likelihood(self.y)
+        self.errors = self.logLayer.errors(self.y)
+
+
 
     """The recognize_file function is used to predict labels of each frames of a file using a minibatch"""
     def recognize_file_with_minibatch(self, file=None, real_label = None):
@@ -142,12 +196,45 @@ class TDBN(object):
         print "PER = %f %%" %(PER*100)
 
 
+def create_train_tdbn_2(training_files=None, training_labels = None,
+                        validation_files=None, validation_labels = None,
+                        test_files=None, test_labels = None,
+                        rbm_training_epoch = 8000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
+                        crbm_training_epoch = 5000, crbm_learning_rate = 1e-3, crbm_n_hidden = 150, crbm_n_delay=6,
+                        finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
+
+    #First step : generate dataset from files
+    data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(training_files, training_labels)
+    data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
+
+    #get datas dimension in order to set RBMs input size
+    n_rbms_dim = [data_rbms[0].get_value(borrow=True).shape[1],
+                 data_rbms[1].get_value(borrow=True).shape[1],
+                 data_rbms[2].get_value(borrow=True).shape[1],
+                 data_rbms[3].get_value(borrow=True).shape[1],
+                 data_rbms[4].get_value(borrow=True).shape[1]]
+
+    print '... building the model'
+    tdbn=TDBN(n_rbm_visibles=n_rbms_dim, n_rbm_hiddens=[30, 30, 30, 30, 30],
+              n_crbm_hidden=crbm_n_hidden, n_crbm_delay = crbm_n_delay, n_label=log_n_label)
+    #########################
+    # PRETRAINING THE MODEL
+    #########################
+    """PRETRAIN RBMS"""
+    print "pretrain RBMs"
+    for index_rbms in range(5):
+        #cost_rbms = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
+        #                                 learning_rate = rbm_learning_rate, batch_size=batch_size, n_hidden=rbm_n_hidden)
+
+        print '... model is pre-trained'
+
+
 
 def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
-                      rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
+                      rbm_training_epoch = 8000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
+                      crbm_training_epoch = 5000, crbm_learning_rate = 1e-3, crbm_n_hidden = 150, crbm_n_delay=6,
                       finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
@@ -245,34 +332,28 @@ def create_train_tdbn(training_files=None, training_labels = None,
         shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
         shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
     #At this step, we have enough elements to create a logistic regressive CRBM
-    log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
-                                dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
-                                dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
-                                dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
-                                batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
-                                training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
-    #Plot CRBM cost evolution
-    if (retrain_crbm) :
-        title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
-        plt.title(title)
-        plt.ylabel("Cost")
-        plt.xlabel("Epoch")
-        x = xrange(crbm_training_epoch)
-        plt.plot(x,cost_crbm)
-        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'FinalCost_'+str(cost_crbm[-1])+'.png'
-        plt.savefig(plot_name)
-        print "CRBM plot is saved!"
-        plt.clf() #without this line, all is plot in the same figure
-        plt.close()
-    #Plot PER evolution
-    title = "PER on test set: \nepoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
-    plt.title(title)
-    plt.ylabel("PER")
-    plt.xlabel("Epoch")
-    plt.plot(PER_x,PER_y)
-    plot_name = 'plot/PER_'+str(timeit.default_timer())+'FinalPER_'+str(PER_y[-1])+'.png'
+    log_crbm, cost_crbm, PER_x_valid,PER_y_valid,PER_x_test,PER_y_test = create_train_LogisticCrbm(
+                                        dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
+                                        dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
+                                        dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
+                                        batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
+                                        training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
+    #Plot CRBM influence PER evolution
+    font = {'size':'11'}
+    title = "\nFine-tuning : epoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
+    plt.subplot(211)
+    plt.title(title, **font)
+    plt.ylabel("PER_validation")
+    plt.plot(PER_x_valid,PER_y_valid, label=label_expe)
+    plt.legend(loc=1, prop={'size':7})
+    plt.subplot(212)
+    plt.ylabel("PER_test")
+    plt.xlabel("epoch")
+    plt.plot(PER_x_test,PER_y_test, label=label_expe)
+    plt.legend(loc=1, prop={'size':7})
+    plot_name = 'plot/PER_crbm_'+str(timeit.default_timer())+'expe_number_'+str(experiment_index)+'.png'
     plt.savefig(plot_name)
-    print "PER plot is saved!"
+    print "CRBM PER plot is saved!"
     plt.clf() #without this line, all is plot in the same figure
     plt.close()
     #Get training time to inform user
@@ -297,31 +378,35 @@ if __name__ == '__main__':
                       'data/geste6a.bvh','data/geste6b.bvh','data/geste6c.bvh', 'data/geste6d.bvh',
                       'data/geste7a.bvh','data/geste7b.bvh','data/geste7c.bvh', 'data/geste7d.bvh',
                       'data/geste8a.bvh','data/geste8b.bvh','data/geste8c.bvh', 'data/geste8d.bvh',
-                      'data/geste9a.bvh','data/geste9b.bvh','data/geste9c.bvh', 'data/geste9d.bvh']
+                      'data/geste10a.bvh','data/geste10b.bvh','data/geste10c.bvh', 'data/geste10d.bvh']
     training_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
 
-    validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh',
-                        'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh',
-                        'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh',
-                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh',
-                        'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh',
-                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh',
-                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh',
-                        'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh',
-                        'data/geste9a.bvh','data/geste9a.bvh','data/geste9g.bvh']
-    validation_labels = [0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,5,6,6,6,7,7,7,8,8,8]
+    validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh','data/geste1h.bvh',
+                        'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh','data/geste2h.bvh',
+                        'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh','data/geste3h.bvh',
+                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh','data/geste4h.bvh',
+                        'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh','data/geste5h.bvh',
+                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh','data/geste6h.bvh',
+                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh','data/geste7h.bvh',
+                        'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh','data/geste8h.bvh',
+                        'data/geste10a.bvh','data/geste10a.bvh','data/geste10g.bvh','data/geste10h.bvh']
+    validation_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
 
-    test_files = ['data/geste1h.bvh',
-                  'data/geste2h.bvh',
-                  'data/geste3h.bvh',
-                  'data/geste4h.bvh',
-                  'data/geste5h.bvh',
-                  'data/geste6h.bvh',
-                  'data/geste7h.bvh',
-                  'data/geste8h.bvh',
-                  'data/geste9a.bvh']
+    test_files = ['data/geste1i.bvh',
+                  'data/geste2i.bvh',
+                  'data/geste3i.bvh',
+                  'data/geste4i.bvh',
+                  'data/geste5i.bvh',
+                  'data/geste6i.bvh',
+                  'data/geste7i.bvh',
+                  'data/geste8i.bvh',
+                  'data/geste10i.bvh']
     test_labels = [0,1,2,3,4,5,6,7,8]
-
+    tdbn = create_train_tdbn_2(
+                    training_files = training_files, training_labels = training_labels,
+                    validation_files= validation_files, validation_labels = validation_labels,
+                    test_files = test_files, test_labels = test_labels)
+    """
     #Here, there are two possibilities :
     #You're prevously chosen to train a TDBN, so create it and save it
     if do_training_phase:
@@ -341,3 +426,4 @@ if __name__ == '__main__':
         print "TDBN loaded from file."
         #tdbn.recognize_file_with_minibatch('data/geste2h.bvh', 0) #Minibatch
         tdbn.recognize_files_frame_by_frame(test_files, test_labels) #frame after frame
+    """
