@@ -321,9 +321,10 @@ def create_train_LogisticCrbm(
         permindex = np.array(datasetindex)
 
     #PER_x and PER_y are two variables used to plot PER evolution
-    PER_y = []
-    PER_x = []
-
+    PER_y_valid = []
+    PER_x_valid = []
+    PER_y_test = []
+    PER_x_test = []
     while (epoch < training_epochs) and (not done_looping): #TODO supprimer le not done_looping pour forcer le bouclage?
         epoch = epoch + 1
         for minibatch_index in xrange(n_train_batches):
@@ -345,6 +346,8 @@ def create_train_LogisticCrbm(
                         this_validation_loss * 100.
                     )
                 )
+                PER_x_valid.append(epoch)
+                PER_y_valid.append(this_validation_loss * 100.)
 
                 # if we got the best validation score until now
                 if this_validation_loss < best_validation_loss:
@@ -364,8 +367,8 @@ def create_train_LogisticCrbm(
                            'best model %f %%') %
                           (epoch, minibatch_index + 1, n_train_batches,
                            test_score * 100.))
-                    PER_x.append(epoch)
-                    PER_y.append(test_score * 100.)
+                    PER_x_test.append(epoch)
+                    PER_y_test.append(test_score * 100.)
             #if patience <= iter:
                 #done_looping = True
                 #break
@@ -378,8 +381,10 @@ def create_train_LogisticCrbm(
             'with test performance %f %%'
         ) % (best_validation_loss * 100., best_iter + 1, test_score * 100.)
     )
+    PER_x_test.append(training_epochs)
+    PER_y_test.append(PER_y_test[-1])
     print ("The fine tuning ran for %.2fm" % ((end_time - start_time)/ 60.))
-    return log_crbm, cost_crbm, PER_x, PER_y
+    return log_crbm, cost_crbm, PER_x_valid, PER_y_valid, PER_x_test, PER_y_test
 
 
 

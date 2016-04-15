@@ -15,6 +15,7 @@ To do that, we stacked a regressive layer on top of a TDBN, a new layer who is i
 import numpy as np
 #Import pyPlot to display cost evolution during learning phase
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as font_manager
 import theano
 import theano.tensor as T
 #Use to compute learning time
@@ -147,156 +148,135 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
-                      finetune_epoch = 10, finetune_learning_rate = 0.1, log_n_label=9):
+                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 450, crbm_n_delay=15,
+                      finetune_epoch = 15000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
-    retrain_rbms = False
-    regenerate_crbm_dataset = False
+    retrain_rbms = True
+    regenerate_crbm_dataset = True
     retrain_crbm = True
 
     #First step : generate dataset from files
     data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(training_files, training_labels)
     data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
 
-    #In order to have an idea of cost evolution during training phase (convergence, oscilation, etc.) we save their prints in a plot.
-    #So, we have create and initialize a pyplot
-    if (retrain_rbms) :
-        title = "RBMs training phase : \n epoch="+str(rbm_training_epoch)+"; Number of hidden= "+str(rbm_n_hidden)+"; Learning rate="+str(rbm_learning_rate)
-        plt.title(title)
-        plt.ylabel("Cost")
-        plt.xlabel("Epoch")
-        x= xrange(rbm_training_epoch)
+    rbm_n_hidden_tab = [30,60,150]
+    for experiment_index in range(len(rbm_n_hidden_tab)):
+        rbm_n_hidden = rbm_n_hidden_tab[experiment_index]
 
-    #Now, if user have choosen to retrain RBMs, we train new RBMs from the datasets previously generated. Else, we just reload RBMs from pkl files
-    rbms = []
-    for index_rbm in range(5):
-        rbm_filename = "trained_model/Pretrain_RBM_" + str(index_rbm) + ".pkl"
+        #In order to have an idea of cost evolution during training phase (convergence, oscilation, etc.) we save their prints in a plot.
+        #So, we have create and initialize a pyplot
         if (retrain_rbms) :
-            rbm, cost_rbms = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
-                                             learning_rate = rbm_learning_rate, batch_size=batch_size, n_hidden=rbm_n_hidden)
-            rbms.append(rbm)
-            plt.plot(x,cost_rbms, label="RBM"+str(index_rbm))
-            with open(rbm_filename, 'w') as f:
-                cPickle.dump(rbm, f)
-        else :
-            rbm = cPickle.load(open(rbm_filename))
-            rbms.append(rbm)
-    #save plot (name depend of time)
-    if (retrain_rbms) :
-        plt.legend(loc=4)
-        plot_name = 'plot/rbm_'+str(timeit.default_timer())+'.png'
-        plt.savefig(plot_name)
-        print "RBMs plot is saved!"
-        plt.clf() #without this line, all is plot in the same figure
-        plt.close()
-    #The next step is to generate a new dataset in order to train the CRBM. To do that, we realize a propagation-up of previous dataset in RBMs
-    dataname = ['trained_model/dataset_train.pkl','trained_model/dataset_valid.pkl','trained_model/dataset_test.pkl']
-    labelname = ['trained_model/labelset_train.pkl','trained_model/labelset_valid.pkl','trained_model/labelset_test.pkl']
-    if(regenerate_crbm_dataset):
-        #In fact, we have to generate three dataset : one for training phase, one for validation and one for test
-        for i in range(3):
-            if(i==0): #training phase
-                files = training_files
-                labels = training_labels
-            elif(i==1): #validation
-                files = validation_files
-                labels = validation_labels
-            else : #and test
-                files = test_files
-                labels = test_labels
-            #generate dataset from file for each of these phases
-            data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(files, labels)
-            data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
-            #propup dataset from visible to hidden layers of RBMs in order to generate data set for crbm
-            dataset_crbm = []
-            number_of_samples = data_rbms[0].get_value(borrow=True).shape[0] #all datas have same size, so data_trunk have been choosen but it could be replace by another
-            for index_data in range(number_of_samples):
-                hidden_rbms = []
-                for index_rbm in range(5):
-                    #propup the index_data frame on rbms
-                    frame = data_rbms[index_rbm].get_value(borrow=True)[index_data]
-                    prop_up = rbms[index_rbm].predict_hidden(frame)
-                    hidden_rbms.append(prop_up)
-                #concanate output of rbms in order to get only one frame for CRBM
-                concatenated_hidden_rbms = np.concatenate((hidden_rbms[0], hidden_rbms[1], hidden_rbms[2], hidden_rbms[3], hidden_rbms[4]), axis=0)
-                #add this to dataset_crbm
-                dataset_crbm.append(concatenated_hidden_rbms)
-                if(index_data%(number_of_samples//100)==0):
-                    print ('CRBM dataset generation %d : %d %%' %(i,((100*index_data/number_of_samples)+1)) )
-
-            with open(dataname[i], 'w') as f:
-                cPickle.dump(dataset_crbm, f)
-            with open(labelname[i], 'w') as f:
-                cPickle.dump(labelset, f)
-
-    #So, CRBM dataset is generated. Now we have to train Logistic_CRBM in order to create a TDBN
-    start_time = timeit.default_timer() #Get time, this used to compute training time
-    #get length of dataset. A dataset is generally generated from several files, the following variables inform of this point (For futher information Cf motion class)
-    trainingLen = generate_dataset(training_files, training_labels)[6]
-    validationLen = generate_dataset(validation_files, validation_labels)[6]
-    testLen = generate_dataset(test_files, test_labels)[6]
-
-    #load and generate shared_data and shared_label, theano optimization that we use to generate optimized dataset (memory optimization)
-    shared_dataset_crbm = []
-    shared_labelset_crbm = []
-    for i in range(3):
-        shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
-        shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
-
-
-    #config for test
-    crbm_learning_rate_tab = [1e-2, 1e-3, 1e-4]
-    crbm_n_hidden_tab = [15,50,150]
-    crbm_n_delay_tab = [3,6,9]
-    for experiment_index in range(3):
-        #Basic config
-        crbm_learning_rate = crbm_learning_rate_tab[0]
-        crbm_n_hidden = crbm_n_hidden_tab[0]
-        crbm_n_delay = crbm_n_delay_tab[0]
-        for in_experiment_index in range(3):
-            if(experiment_index==0):
-                crbm_learning_rate = crbm_learning_rate_tab[in_experiment_index]
-                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; n_past_visible :"+str(crbm_n_delay)
-                label_expe = "CRBM lr="+str(crbm_learning_rate)
-            elif(experiment_index==1):
-                crbm_n_hidden = crbm_n_hidden_tab[in_experiment_index]
-                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
-                label_expe = "CRBM n_hidden="+str(crbm_n_hidden)
-            else :
-                crbm_n_delay = crbm_n_delay_tab[in_experiment_index]
-                title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)
-                label_expe = "CRBM n_delay="+str(crbm_n_delay)
-            #At this step, we have enough elements to create a logistic regressive CRBM
-            log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
-                                        dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
-                                        dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
-                                        dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
-                                        batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
-                                        training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
-            #Plot CRBM cost evolution
-
+            title = "RBMs training phase : \n epoch="+str(rbm_training_epoch)+"; Number of hidden= "+str(rbm_n_hidden)+"; Learning rate="+str(rbm_learning_rate)
             plt.title(title)
             plt.ylabel("Cost")
             plt.xlabel("Epoch")
-            x = xrange(crbm_training_epoch)
-            plt.plot(x,cost_crbm, label=label_expe)
-        plt.legend(loc=1)
-        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'expe_number_'+str(experiment_index)+'.png'
+            x= xrange(rbm_training_epoch)
+
+        #Now, if user have choosen to retrain RBMs, we train new RBMs from the datasets previously generated. Else, we just reload RBMs from pkl files
+        rbms = []
+        for index_rbm in range(5):
+            rbm_filename = "trained_model/Pretrain_RBM_" + str(index_rbm) + ".pkl"
+            if (retrain_rbms) :
+                rbm, cost_rbms = create_train_rbm(dataset = data_rbms[index_rbm], seqlen = seqlen, training_epochs=rbm_training_epoch,
+                                                 learning_rate = rbm_learning_rate, batch_size=batch_size, n_hidden=rbm_n_hidden)
+                rbms.append(rbm)
+                plt.plot(x,cost_rbms, label="RBM"+str(index_rbm))
+                with open(rbm_filename, 'w') as f:
+                    cPickle.dump(rbm, f)
+            else :
+                rbm = cPickle.load(open(rbm_filename))
+                rbms.append(rbm)
+        #save plot (name depend of time)
+        if (retrain_rbms) :
+            plt.legend(loc=4)
+            plot_name = 'plot/rbm_'+str(timeit.default_timer())+'.png'
+            plt.savefig(plot_name)
+            print "RBMs plot is saved!"
+            plt.clf() #without this line, all is plot in the same figure
+            plt.close()
+        #The next step is to generate a new dataset in order to train the CRBM. To do that, we realize a propagation-up of previous dataset in RBMs
+        dataname = ['trained_model/dataset_train.pkl','trained_model/dataset_valid.pkl','trained_model/dataset_test.pkl']
+        labelname = ['trained_model/labelset_train.pkl','trained_model/labelset_valid.pkl','trained_model/labelset_test.pkl']
+        if(regenerate_crbm_dataset):
+            #In fact, we have to generate three dataset : one for training phase, one for validation and one for test
+            for i in range(3):
+                if(i==0): #training phase
+                    files = training_files
+                    labels = training_labels
+                elif(i==1): #validation
+                    files = validation_files
+                    labels = validation_labels
+                else : #and test
+                    files = test_files
+                    labels = test_labels
+                #generate dataset from file for each of these phases
+                data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(files, labels)
+                data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
+                #propup dataset from visible to hidden layers of RBMs in order to generate data set for crbm
+                dataset_crbm = []
+                number_of_samples = data_rbms[0].get_value(borrow=True).shape[0] #all datas have same size, so data_trunk have been choosen but it could be replace by another
+                for index_data in range(number_of_samples):
+                    hidden_rbms = []
+                    for index_rbm in range(5):
+                        #propup the index_data frame on rbms
+                        frame = data_rbms[index_rbm].get_value(borrow=True)[index_data]
+                        prop_up = rbms[index_rbm].predict_hidden(frame)
+                        hidden_rbms.append(prop_up)
+                    #concanate output of rbms in order to get only one frame for CRBM
+                    concatenated_hidden_rbms = np.concatenate((hidden_rbms[0], hidden_rbms[1], hidden_rbms[2], hidden_rbms[3], hidden_rbms[4]), axis=0)
+                    #add this to dataset_crbm
+                    dataset_crbm.append(concatenated_hidden_rbms)
+                    if(index_data%(number_of_samples//100)==0):
+                        print ('CRBM dataset generation %d : %d %%' %(i,((100*index_data/number_of_samples)+1)) )
+
+                with open(dataname[i], 'w') as f:
+                    cPickle.dump(dataset_crbm, f)
+                with open(labelname[i], 'w') as f:
+                    cPickle.dump(labelset, f)
+
+        #So, CRBM dataset is generated. Now we have to train Logistic_CRBM in order to create a TDBN
+        start_time = timeit.default_timer() #Get time, this used to compute training time
+        #get length of dataset. A dataset is generally generated from several files, the following variables inform of this point (For futher information Cf motion class)
+        trainingLen = generate_dataset(training_files, training_labels)[6]
+        validationLen = generate_dataset(validation_files, validation_labels)[6]
+        testLen = generate_dataset(test_files, test_labels)[6]
+
+        #load and generate shared_data and shared_label, theano optimization that we use to generate optimized dataset (memory optimization)
+        shared_dataset_crbm = []
+        shared_labelset_crbm = []
+        for i in range(3):
+            shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
+            shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
+        #At this step, we have enough elements to create a logistic regressive CRBM
+        log_crbm, cost_crbm, PER_x_valid,PER_y_valid,PER_x_test,PER_y_test = create_train_LogisticCrbm(
+                                            dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
+                                            dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
+                                            dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
+                                            batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
+                                            training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
+
+        title = "Pre-training : epoch="+str(crbm_training_epoch)+"; delay="+str(crbm_n_delay)+\
+                            "; n_hidden= "+str(crbm_n_hidden)+"; learning rate="+str(crbm_learning_rate)
+        label_expe = "RBM n_hidden="+str(rbm_n_hidden)
+
+        #Plot CRBM influence PER evolution
+        font = {'size':'11'}
+        title += "\nFine-tuning : epoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
+        plt.subplot(211)
+        plt.title(title, **font)
+        plt.ylabel("PER_validation")
+        plt.plot(PER_x_valid,PER_y_valid, label=label_expe)
+        plt.legend(loc=1, prop={'size':7})
+        plt.subplot(212)
+        plt.ylabel("PER_test")
+        plt.xlabel("epoch")
+        plt.plot(PER_x_test,PER_y_test, label=label_expe)
+        plt.legend(loc=1, prop={'size':7})
+        plot_name = 'plot/PER_RBM_'+str(timeit.default_timer())+'.png'
         plt.savefig(plot_name)
-        print "CRBM plot is saved!"
-        plt.clf() #without this line, all is plot in the same figure
-        plt.close()
-    #Plot PER evolution
-    title = "PER on test set: \nepoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
-    plt.title(title)
-    plt.ylabel("PER")
-    plt.xlabel("Epoch")
-    plt.plot(PER_x,PER_y)
-    plot_name = 'plot/PER_'+str(timeit.default_timer())+'FinalPER_'+str(PER_y[-1])+'.png'
-    plt.savefig(plot_name)
-    print "PER plot is saved!"
+        print "PER plot is saved!"
     plt.clf() #without this line, all is plot in the same figure
     plt.close()
     #Get training time to inform user
@@ -321,29 +301,29 @@ if __name__ == '__main__':
                       'data/geste6a.bvh','data/geste6b.bvh','data/geste6c.bvh', 'data/geste6d.bvh',
                       'data/geste7a.bvh','data/geste7b.bvh','data/geste7c.bvh', 'data/geste7d.bvh',
                       'data/geste8a.bvh','data/geste8b.bvh','data/geste8c.bvh', 'data/geste8d.bvh',
-                      'data/geste9a.bvh','data/geste9b.bvh','data/geste9c.bvh', 'data/geste9d.bvh']
+                      'data/geste10a.bvh','data/geste10b.bvh','data/geste10c.bvh', 'data/geste10d.bvh']
     training_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
 
-    validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh',
-                        'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh',
-                        'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh',
-                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh',
-                        'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh',
-                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh',
-                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh',
-                        'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh',
-                        'data/geste9a.bvh','data/geste9a.bvh','data/geste9g.bvh']
-    validation_labels = [0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,5,6,6,6,7,7,7,8,8,8]
+    validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh','data/geste1h.bvh',
+                        'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh','data/geste2h.bvh',
+                        'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh','data/geste3h.bvh',
+                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh','data/geste4h.bvh',
+                        'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh','data/geste5h.bvh',
+                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh','data/geste6h.bvh',
+                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh','data/geste7h.bvh',
+                        'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh','data/geste8h.bvh',
+                        'data/geste10a.bvh','data/geste10a.bvh','data/geste10g.bvh','data/geste10h.bvh']
+    validation_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
 
-    test_files = ['data/geste1h.bvh',
-                  'data/geste2h.bvh',
-                  'data/geste3h.bvh',
-                  'data/geste4h.bvh',
-                  'data/geste5h.bvh',
-                  'data/geste6h.bvh',
-                  'data/geste7h.bvh',
-                  'data/geste8h.bvh',
-                  'data/geste9a.bvh']
+    test_files = ['data/geste1i.bvh',
+                  'data/geste2i.bvh',
+                  'data/geste3i.bvh',
+                  'data/geste4i.bvh',
+                  'data/geste5i.bvh',
+                  'data/geste6i.bvh',
+                  'data/geste7i.bvh',
+                  'data/geste8i.bvh',
+                  'data/geste10i.bvh']
     test_labels = [0,1,2,3,4,5,6,7,8]
 
     #Here, there are two possibilities :
