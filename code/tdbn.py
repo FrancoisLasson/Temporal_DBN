@@ -15,6 +15,7 @@ To do that, we stacked a regressive layer on top of a TDBN, a new layer who is i
 import numpy as np
 #Import pyPlot to display cost evolution during learning phase
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as font_manager
 import theano
 import theano.tensor as T
 #Use to compute learning time
@@ -147,8 +148,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 15, crbm_n_delay=6,
-                      finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
+                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 450, crbm_n_delay=10,
+                      finetune_epoch = 20000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
@@ -244,35 +245,32 @@ def create_train_tdbn(training_files=None, training_labels = None,
     for i in range(3):
         shared_dataset_crbm.append(theano.shared(np.asarray(cPickle.load(open(dataname[i])), dtype=theano.config.floatX)))
         shared_labelset_crbm.append(theano.shared(np.asarray(cPickle.load(open(labelname[i])))))
+
+    #CRBMs
+    title = "Pre-training : epoch="+str(crbm_training_epoch)+"; delay="+str(crbm_n_delay)+\
+            "; n_hidden= "+str(crbm_n_hidden)+"; learning rate="+str(crbm_learning_rate)
+
     #At this step, we have enough elements to create a logistic regressive CRBM
-    log_crbm, cost_crbm, PER_x,PER_y = create_train_LogisticCrbm(
-                                dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
-                                dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
-                                dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
-                                batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
-                                training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
-    #Plot CRBM cost evolution
-    if (retrain_crbm) :
-        title = "CRBM training phase : \nepoch="+str(crbm_training_epoch)+"; n_hidden= "+str(crbm_n_hidden)+"; Learning rate="+str(crbm_learning_rate)+"; n_past_visible :"+str(crbm_n_delay)
-        plt.title(title)
-        plt.ylabel("Cost")
-        plt.xlabel("Epoch")
-        x = xrange(crbm_training_epoch)
-        plt.plot(x,cost_crbm)
-        plot_name = 'plot/crbm_'+str(timeit.default_timer())+'FinalCost_'+str(cost_crbm[-1])+'.png'
-        plt.savefig(plot_name)
-        print "CRBM plot is saved!"
-        plt.clf() #without this line, all is plot in the same figure
-        plt.close()
-    #Plot PER evolution
-    title = "PER on test set: \nepoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
-    plt.title(title)
-    plt.ylabel("PER")
-    plt.xlabel("Epoch")
-    plt.plot(PER_x,PER_y)
-    plot_name = 'plot/PER_'+str(timeit.default_timer())+'FinalPER_'+str(PER_y[-1])+'.png'
+    log_crbm, cost_crbm, PER_x_valid,PER_y_valid,PER_x_test,PER_y_test = create_train_LogisticCrbm(
+                                        dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
+                                        dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
+                                        dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
+                                        batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
+                                        training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
+    #Plot CRBM influence PER evolution
+    font = {'size':'11'}
+    title += "\nFine-tuning : epoch="+str(finetune_epoch)+"; Learning rate="+str(finetune_learning_rate)
+    plt.subplot(211)
+    plt.title(title, **font)
+    plt.ylabel("PER_validation")
+    plt.plot(PER_x_valid,PER_y_valid)
+    plt.subplot(212)
+    plt.ylabel("PER_test")
+    plt.xlabel("epoch")
+    plt.plot(PER_x_test,PER_y_test)
+    plot_name = 'plot/PER_crbm_'+str(timeit.default_timer())+'.png'
     plt.savefig(plot_name)
-    print "PER plot is saved!"
+    print "CRBM PER plot is saved!"
     plt.clf() #without this line, all is plot in the same figure
     plt.close()
     #Get training time to inform user
@@ -297,29 +295,29 @@ if __name__ == '__main__':
                       'data/geste6a.bvh','data/geste6b.bvh','data/geste6c.bvh', 'data/geste6d.bvh',
                       'data/geste7a.bvh','data/geste7b.bvh','data/geste7c.bvh', 'data/geste7d.bvh',
                       'data/geste8a.bvh','data/geste8b.bvh','data/geste8c.bvh', 'data/geste8d.bvh',
-                      'data/geste9a.bvh','data/geste9b.bvh','data/geste9c.bvh', 'data/geste9d.bvh']
+                      'data/geste10a.bvh','data/geste10b.bvh','data/geste10c.bvh', 'data/geste10d.bvh']
     training_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
 
-    validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh',
-                        'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh',
-                        'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh',
-                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh',
-                        'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh',
-                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh',
-                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh',
-                        'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh',
-                        'data/geste9a.bvh','data/geste9a.bvh','data/geste9g.bvh']
-    validation_labels = [0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,5,6,6,6,7,7,7,8,8,8]
+    validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh','data/geste1h.bvh',
+                        'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh','data/geste2h.bvh',
+                        'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh','data/geste3h.bvh',
+                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh','data/geste4h.bvh',
+                        'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh','data/geste5h.bvh',
+                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh','data/geste6h.bvh',
+                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh','data/geste7h.bvh',
+                        'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh','data/geste8h.bvh',
+                        'data/geste10a.bvh','data/geste10a.bvh','data/geste10g.bvh','data/geste10h.bvh']
+    validation_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
 
-    test_files = ['data/geste1h.bvh',
-                  'data/geste2h.bvh',
-                  'data/geste3h.bvh',
-                  'data/geste4h.bvh',
-                  'data/geste5h.bvh',
-                  'data/geste6h.bvh',
-                  'data/geste7h.bvh',
-                  'data/geste8h.bvh',
-                  'data/geste9a.bvh']
+    test_files = ['data/geste1i.bvh',
+                  'data/geste2i.bvh',
+                  'data/geste3i.bvh',
+                  'data/geste4i.bvh',
+                  'data/geste5i.bvh',
+                  'data/geste6i.bvh',
+                  'data/geste7i.bvh',
+                  'data/geste8i.bvh',
+                  'data/geste10i.bvh']
     test_labels = [0,1,2,3,4,5,6,7,8]
 
     #Here, there are two possibilities :
