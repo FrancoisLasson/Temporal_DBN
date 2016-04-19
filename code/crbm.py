@@ -25,7 +25,7 @@ from motion import generate_dataset #to load mocap
 class CRBM(object):
     """Conditional Restricted Boltzmann Machine (CRBM)  """
     def __init__(self, input=None, input_history=None,
-                n_visible=49, n_hidden=15, delay=6,
+                n_visible=49, n_hidden=15, delay=6, freq=3,
                 A=None, B=None, W=None, hbias=None, vbias=None,
                 numpy_rng=None, theano_rng=None):
         """
@@ -64,6 +64,7 @@ class CRBM(object):
         self.n_visible = n_visible #number of neurones in visible layer
         self.n_hidden = n_hidden #number of neurones in hidden layer
         self.delay = delay #number of past visible layers
+        self.freq = freq #frequence of past visible layers actualization
 
         #Initialize seed for random
         if numpy_rng is None:
@@ -265,14 +266,14 @@ class CRBM(object):
     def train(self, learning_rate=None, training_epochs=None,
                  dataset=None, seqlen= None, batch_size=None):
         # compute number of minibatches for training, validation and testing
-        #for each file, n_delay frames are used to initialized memory. So, this 6 frames do not have to be count for frame minibatch division
-        n_train_batches = (dataset.get_value(borrow=True).shape[0]-self.delay*len(seqlen)) / batch_size
+        #for each file, n_delay frames are used to initialized memory. So, these (delay*freq) frames not have to be count for frame minibatch division
+        n_train_batches = (dataset.get_value(borrow=True).shape[0]-(self.delay*self.freq)*len(seqlen)) / batch_size
 
         # valid starting indices
         datasetindex = []
         last = 0
         for s in seqlen:
-            datasetindex += range(last + self.delay, last + s)
+            datasetindex += range(last + (self.delay*self.freq), last + s)
             last += s
         permindex = np.array(datasetindex)
         self.numpy_rng.shuffle(permindex)
@@ -299,6 +300,7 @@ class CRBM(object):
 
         start_time = timeit.default_timer()
         cost_y = []
+
         # go through training epochs
         for epoch in xrange(training_epochs):
 
@@ -313,7 +315,9 @@ class CRBM(object):
                 # now build a linear index to the frames at each delay tap
                 # (i.e. time t-1 to t-delay)
                 # gives a batch_size x delay array of indices for history
-                hist_idx = np.array([data_idx - n for n in xrange(1, self.delay + 1)]).T
+                #have also to include frequence of past visible layers actualization
+
+                hist_idx = np.array([data_idx-(n*self.freq) for n in xrange(1, self.delay + 1)]).T
                 this_cost = train_crbm(data_idx, hist_idx.ravel())
                 #print batch_index, this_cost
                 mean_cost += [this_cost]
@@ -324,7 +328,7 @@ class CRBM(object):
         print ('Training took %f minutes' % (pretraining_time / 60.))
         return cost_y
 
-
+    """
     def predict_hidden(self, dataset=None, batch_size=100):
         # compute number of minibatches for training, validation and testing
         n_test_batches = dataset.get_value(borrow=True).shape[0] / batch_size
@@ -358,11 +362,11 @@ class CRBM(object):
                 print "Hidden CRBM (frame %d):" %(batch_index*batch_size+index_in_batch+1)
                 print print_hidden(data_idx, hist_idx.ravel())[0][index_in_batch]
                 print "-----------"
-
+    """
 
 def create_train_crbm(learning_rate=1e-3, training_epochs=10000,
              dataset=None, seqlen= None, batch_size=100,
-             n_hidden=50, delay=6):
+             n_hidden=50, delay=6, freq=3):
     """
     Demonstrate how to train a CRBM.
     This is demonstrated on mocap data.
@@ -381,7 +385,7 @@ def create_train_crbm(learning_rate=1e-3, training_epochs=10000,
     x_history = T.matrix('x_history')
 
     # construct the CRBM class
-    crbm = CRBM(input=x, input_history=x_history, n_visible=n_dim, n_hidden=n_hidden, delay=delay,
+    crbm = CRBM(input=x, input_history=x_history, n_visible=n_dim, n_hidden=n_hidden, delay=delay, freq=freq,
                 numpy_rng=rng, theano_rng=theano_rng)
 
     crbm.train(learning_rate=learning_rate, training_epochs=training_epochs, dataset=dataset, seqlen= seqlen, batch_size=batch_size)

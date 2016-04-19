@@ -28,7 +28,7 @@ class LOGISTIC_CRBM(object):
     CRBM is pre-trained by the constrastive divergence algorithm, after this architecture is fine-tuned.
     """
     def __init__(self, numpy_rng=None, theano_rng=None,
-                 n_input=150, n_hidden=50, n_label=3, n_delay=6):
+                 n_input=150, n_hidden=50, n_label=3, n_delay=6, freq=3):
         """
         :type numpy_rng: np.random.RandomState
         :param numpy_rng: numpy random number generator used to draw initial weights
@@ -56,6 +56,7 @@ class LOGISTIC_CRBM(object):
         self.n_hidden = n_hidden
         self.n_label = n_label
         self.delay = n_delay
+        self.freq = freq
 
         if numpy_rng is None:
             # create a number generator
@@ -72,7 +73,7 @@ class LOGISTIC_CRBM(object):
         # Construct an CRBM that shared weights with this layer
         self.crbm_layer = CRBM(numpy_rng=numpy_rng, theano_rng=theano_rng,
                                input=self.x, input_history = self.x_history,
-                               n_visible=n_input, n_hidden=n_hidden, delay =n_delay)
+                               n_visible=n_input, n_hidden=n_hidden, delay =n_delay, freq=freq)
 
         self.params.append(self.crbm_layer.W)
         self.params.append(self.crbm_layer.B)
@@ -119,9 +120,9 @@ class LOGISTIC_CRBM(object):
         '''
 
         # compute number of minibatches for training, validation and testing
-        #@Info : why -self.delay*len(seqlen) ? : For each file in each dataset, 6 frames are used to initialize crbm memory (past visibles layer)
-        n_valid_batches = (dataset_validation.get_value(borrow=True).shape[0]-self.delay*len(seqlen_validation))/batch_size
-        n_test_batches = (dataset_test.get_value(borrow=True).shape[0]-self.delay*len(seqlen_test))/batch_size
+        #@Info : why -self.delay*len(seqlen) ? : For each file in each dataset, (self.delay*self.freq) frames are used to initialize crbm memory (past visibles layer)
+        n_valid_batches = (dataset_validation.get_value(borrow=True).shape[0]-(self.delay*self.freq)*len(seqlen_validation))/batch_size
+        n_test_batches = (dataset_test.get_value(borrow=True).shape[0]-(self.delay*self.freq)*len(seqlen_test))/batch_size
 
         n_dim = dataset_validation.get_value(borrow=True).shape[1]
 
@@ -172,13 +173,13 @@ class LOGISTIC_CRBM(object):
             datasetindex = []
             last = 0
             for s in seqlen_validation:
-                datasetindex += range(last + self.delay, last + s)
+                datasetindex += range(last + (self.delay*self.freq), last + s)
                 last += s
             permindex = np.array(datasetindex)
             valid_score_out = []
             for batch_index in xrange(n_valid_batches):
                 data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size]
-                hist_idx = np.array([data_idx - n for n in xrange(1, self.delay + 1)]).T
+                hist_idx = np.array([data_idx-(n*self.freq) for n in xrange(1, self.delay + 1)]).T
                 valid_score_out.append(valid_score_i(data_idx, hist_idx.ravel()))
             return valid_score_out
 
@@ -187,13 +188,13 @@ class LOGISTIC_CRBM(object):
             datasetindex = []
             last = 0
             for s in seqlen_test:
-                datasetindex += range(last + self.delay, last + s)
+                datasetindex += range(last + (self.delay*self.freq), last + s)
                 last += s
             permindex = np.array(datasetindex)
             test_score_out = []
             for batch_index in xrange(n_test_batches):
                 data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size]
-                hist_idx = np.array([data_idx - n for n in xrange(1, self.delay + 1)]).T
+                hist_idx = np.array([data_idx-(n*self.freq) for n in xrange(1, self.delay + 1)]).T
                 test_score_out.append(test_score_i(data_idx, hist_idx.ravel()))
             return test_score_out
 
@@ -222,12 +223,12 @@ class LOGISTIC_CRBM(object):
             name='print_prediction'
             )
         # valid starting indices
-        datasetindex = range(self.delay, dataset_test.get_value(borrow=True).shape[0])
+        datasetindex = range(self.delay*self.freq, dataset_test.get_value(borrow=True).shape[0])
         permindex = np.array(datasetindex)
 
         for batch_index in xrange(n_test_batches):
             data_idx = permindex[batch_index * batch_size : (batch_index + 1) * batch_size]
-            hist_idx = np.array([data_idx - n for n in xrange(1, self.delay + 1)]).T
+            hist_idx = np.array([data_idx - n*self.freq for n in xrange(1, self.delay + 1)]).T
             for index_in_batch in range(batch_size) :
                 print "(frame %d):" %(batch_index*batch_size+index_in_batch+1)
                 print "%% of recognition for each pattern : "
@@ -253,7 +254,7 @@ def create_train_LogisticCrbm(
                     dataset_train=None, labelset_train=None, seqlen_train = None,
                     dataset_validation=None, labelset_validation=None, seqlen_validation = None,
                     dataset_test=None, labelset_test=None, seqlen_test = None,
-                    batch_size=100, number_hidden_crbm=50, n_delay=6, n_label=3, retrain_crbm = True):
+                    batch_size=100, number_hidden_crbm=50, n_delay=6, freq=3, n_label=3, retrain_crbm = True):
 
     #get datain dimension in order to set CRBM input size
     n_dim = dataset_train.get_value(borrow=True).shape[1]
@@ -267,7 +268,7 @@ def create_train_LogisticCrbm(
     # PRETRAINING THE MODEL # # for test, it's also possible to reload it
     #########################
     if (retrain_crbm):
-        log_crbm = LOGISTIC_CRBM(numpy_rng=numpy_rng, n_input=n_dim, n_label = n_label, n_hidden=number_hidden_crbm, n_delay=n_delay)
+        log_crbm = LOGISTIC_CRBM(numpy_rng=numpy_rng, n_input=n_dim, n_label = n_label, n_hidden=number_hidden_crbm, n_delay=n_delay, freq=freq)
         print '... pre-training the model'
         cost_crbm = log_crbm.crbm_layer.train(learning_rate=pretrain_lr, training_epochs=pretraining_epochs, dataset=dataset_train, seqlen= seqlen_train, batch_size=batch_size)
         with open('trained_model/best_log_crbm.pkl', 'w') as f:
@@ -282,8 +283,8 @@ def create_train_LogisticCrbm(
     ########################
 
     # compute number of minibatches for training, validation and testing
-    #@Info : why -self.delay*len(seqlen) ? : For each file in each dataset, 6 frames are used to initialize crbm memory (past visibles layer)
-    n_train_batches = (dataset_train.get_value(borrow=True).shape[0]-log_crbm.delay*len(seqlen_train)) / batch_size
+    #@Info : why -self.delay*len(seqlen) ? : For each file in each dataset, log_crbm.delay*log_crbm.freq frames are used to initialize crbm memory (past visibles layer)
+    n_train_batches = (dataset_train.get_value(borrow=True).shape[0]-(log_crbm.delay*log_crbm.freq)*len(seqlen_train)) / batch_size
 
 
     # get the training, validation and testing function for the model
@@ -316,7 +317,7 @@ def create_train_LogisticCrbm(
     datasetindex = []
     last = 0
     for s in seqlen_train:
-        datasetindex += range(last + log_crbm.delay, last + s)
+        datasetindex += range(last+(log_crbm.delay*log_crbm.freq), last + s)
         last += s
         permindex = np.array(datasetindex)
 
@@ -329,7 +330,7 @@ def create_train_LogisticCrbm(
         epoch = epoch + 1
         for minibatch_index in xrange(n_train_batches):
             data_idx = permindex[minibatch_index * batch_size:(minibatch_index + 1) * batch_size] #Due to memory (past visible)
-            hist_idx = np.array([data_idx - n for n in xrange(1, log_crbm.delay + 1)]).T
+            hist_idx = np.array([data_idx -(n*log_crbm.freq) for n in xrange(1, log_crbm.delay + 1)]).T
             minibatch_avg_cost = train_fn(data_idx, hist_idx.ravel()) #training model : fine tune phase
             iter = (epoch - 1) * n_train_batches + minibatch_index
 

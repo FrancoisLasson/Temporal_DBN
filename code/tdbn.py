@@ -148,7 +148,7 @@ def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 450, crbm_n_delay=10,
+                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 450, crbm_n_delay=10, crbm_freq=3,
                       finetune_epoch = 20000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
@@ -255,7 +255,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
                                         dataset_train=shared_dataset_crbm[0], labelset_train=shared_labelset_crbm[0], seqlen_train = trainingLen,
                                         dataset_validation=shared_dataset_crbm[1], labelset_validation=shared_labelset_crbm[1], seqlen_validation = validationLen,
                                         dataset_test=shared_dataset_crbm[2], labelset_test=shared_labelset_crbm[2], seqlen_test = testLen,
-                                        batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate, number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay,
+                                        batch_size = batch_size, pretraining_epochs=crbm_training_epoch, pretrain_lr = crbm_learning_rate,
+                                        number_hidden_crbm = crbm_n_hidden, n_delay=crbm_n_delay, freq = crbm_freq,
                                         training_epochs = finetune_epoch, finetune_lr = finetune_learning_rate, n_label = log_n_label, retrain_crbm = retrain_crbm)
     #Plot CRBM influence PER evolution
     font = {'size':'11'}
