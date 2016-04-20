@@ -203,14 +203,14 @@ class LOGISTIC_CRBM(object):
     """recognize_dataset is a function used to recognize a dataset using a mini_batch"""
     def recognize_dataset(self, dataset_test = None, seqlen=None, batch_size =100) :
         #Here, we don't ignore the 6 first frames cause we want to test recognition performance on each frames of the test dataset
-        n_test_batches = dataset_test.get_value(borrow=True).shape[0] / batch_size
+        n_test_batches = (dataset_test.get_value(borrow=True).shape[0]-(self.delay*self.freq)*len(seqlen)) / batch_size
         n_dim =  dataset_test.get_value(borrow=True).shape[1]
 
         # allocate symbolic variables for the data
         index = T.lvector()    # index to a [mini]batch
         index_hist = T.lvector()  # index to history
 
-        input_log = T.nnet.sigmoid(T.dot(self.x, self.crbm_layer.W)+ T.nnet.sigmoid(T.dot(self.x_history, self.crbm_layer.B) + self.crbm_layer.hbias))
+        input_log = T.nnet.sigmoid(T.dot(self.x, self.crbm_layer.W)+ T.dot(self.x_history, self.crbm_layer.B) + self.crbm_layer.hbias)
         prob = self.logLayer.p_y_given_x
         prediction = self.logLayer.y_pred
 
@@ -241,9 +241,9 @@ class LOGISTIC_CRBM(object):
         #Define a theano function
         visible = T.dvector()
         past_visible = T.dvector()
-        input_log = T.nnet.sigmoid(T.dot(visible, self.crbm_layer.W)+ T.nnet.sigmoid(T.dot(past_visible, self.crbm_layer.B) + self.crbm_layer.hbias))
+        input_log = T.nnet.sigmoid(T.dot(visible, self.crbm_layer.W)+ T.dot(past_visible, self.crbm_layer.B) + self.crbm_layer.hbias)
         output_log = T.nnet.softmax(T.dot(input_log, self.logLayer.W) + self.logLayer.b)
-        prediction = T.argmax(output_log, axis=1)
+        prediction = T.argmax(output_log, axis=1)[0]
         f = theano.function([visible, past_visible],prediction)
         return f(crbm_visible, crbm_past_visible)
 

@@ -41,9 +41,9 @@ class TDBN(object):
         self.log_crbm = log_crbm
 
     """The recognize_file function is used to predict labels of each frames of a file using a minibatch"""
-    def recognize_file_with_minibatch(self, file=None, real_label = None):
+    def recognize_file_with_minibatch(self, files=None, real_labels = None):
         #First step : get dataset from file
-        data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset([file], [real_label])
+        data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(files, real_labels)
         data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
         #Now, get the number of frames in this dataset (in the file we have to recognize)
         number_of_frames = data_rbms[0].get_value(borrow=True).shape[0]
@@ -56,7 +56,7 @@ class TDBN(object):
                 frame = data_rbms[index_rbm].get_value(borrow=True)[index_frame]
                 hidden_rbms.append(self.rbms[index_rbm].predict_hidden(frame))
             #concatenate hidden RBMs'layer
-            concatenate_hidden_rbms = np.concatenate((hidden_rbms[0], hidden_rbms[1], hidden_rbms[2], hidden_rbms[3], hidden_rbms[4]), axis=0)
+            concatenate_hidden_rbms = np.concatenate(hidden_rbms, axis=0)
             #append to dataset
             dataset_crbm.append(concatenate_hidden_rbms)
             #print information about % of generation for user
@@ -81,17 +81,18 @@ class TDBN(object):
         past_visible = []
         for i in range(self.log_crbm.delay):
             past_visible.append(np.zeros(self.log_crbm.n_input))
-        concatenate_past_visible = past_visible[0]
-        for i in range(1, self.log_crbm.delay):
-            concatenate_past_visible = np.concatenate((concatenate_past_visible, past_visible[i]), axis=0)
+        concatenate_past_visible = np.concatenate(past_visible, axis=0)
 
-        #For each frames, predict label
-        for index_frame in range(number_of_frames):
+        if (number_of_frames < self.log_crbm.delay*self.log_crbm.freq):
+            return
+        else :
+            print "The %d first frames used to initialize past visibles layers (ignored for PER)" %(self.log_crbm.delay*self.log_crbm.freq)
+        for index_frame in range(self.log_crbm.delay*self.log_crbm.freq,number_of_frames):
             #propup this frame on each RBMs to get hidden representations
             hidden_rbms = []
             for index_rbm in range(5):
                 hidden_rbms.append(self.rbms[index_rbm].predict_hidden(data_rbms[index_rbm].get_value(borrow=True)[index_frame]))
-            concatenate_hidden_rbms = np.concatenate((hidden_rbms[0], hidden_rbms[1], hidden_rbms[2], hidden_rbms[3], hidden_rbms[4]), axis=0)
+            concatenate_hidden_rbms = np.concatenate(hidden_rbms, axis=0)
 
             #prop up to CRBM logistic
             predict_label = self.log_crbm.predict_label(concatenate_hidden_rbms, concatenate_past_visible)
@@ -102,59 +103,95 @@ class TDBN(object):
             for i in range(self.log_crbm.delay-1, 0, -1):
                 past_visible[i] = past_visible[i-1]
             past_visible[0] = concatenate_hidden_rbms
-            concatenate_past_visible = past_visible[0]
-            for i in range(1, self.log_crbm.delay):
-                concatenate_past_visible = np.concatenate((concatenate_past_visible, past_visible[i]), axis=0)
+            concatenate_past_visible = np.concatenate(past_visible, axis=0)
 
         end_time = timeit.default_timer()
         recognition_time = (end_time - start_time)
+        PER=0
         print ('Time for recognition : %f secondes ; Duration of file : %f secondes.' %(recognition_time,number_of_frames/120.))
-        print "\nConfusion matrix :"
-        print confusion_matrix
-        print "\n->Analysis :"
-        #for each gestures (label)
-        for i in range(self.log_crbm.n_label):
-            print "Gesture label %d :" %i
-            #determine confusion matrix
-            confusion_matrix_gesture = np.zeros((2,2))
-            TP,FN,FP,TN=0,0,0,0
-            TP = confusion_matrix[i,i]
-            for j in range(self.log_crbm.n_label):
-                FN+= confusion_matrix[j,i]
-                TN+= confusion_matrix[j,j]
-            FN-= TP
-            TN-= TP
-            FP= number_of_frames-(TP+FN+TN)
-            confusion_matrix_gesture[0,0] = TP
-            confusion_matrix_gesture[1,0] = FN
-            confusion_matrix_gesture[0,1] = FP
-            confusion_matrix_gesture[1,1] = TN
-            print confusion_matrix_gesture
-            precision = TP/(TP+FP)
-            recall = TP/(TP+FN)
-            accuracy = (TP+TN)/number_of_frames
-            f_measure = 2/((1/precision)+(1/recall))
-            print "Precision : %f %%" %(precision*100)
-            print "Recall : %f %%" %(recall*100)
-            print "Accuracy : %f %%" %(accuracy*100)
-            print "F_measure : %f %%" %(f_measure*100)
-            print "-------------"
-        PER = 1-accuracy
-        print "PER = %f %%" %(PER*100)
+        return confusion_matrix
 
+
+    """The recognize_file function is used to predict labels of chunks and determine PER(several frames)"""
+    def recognize_files_chunk(self, file=None, real_label = None):
+        #recognize frames using chunk and average value on chunk
+        chunk_size = 240 #number of frames in a chunk
+        chunk_covering = 30 #number of frames for covering
+
+        #confusion matrix : https://ccrma.stanford.edu/workshops/mir2009/references/ROCintro.pdf
+        confusion_matrix = np.zeros((self.log_crbm.n_label,self.log_crbm.n_label)) #REAL : column, #Predict : line
+        #get time for recognition
+        start_time = timeit.default_timer()
+        #First step : get dataset from file
+        data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset([file], [real_label])
+        data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
+        #Now, get the number of frames in this dataset (in the file we have to recognize)
+        number_of_frames = data_rbms[0].get_value(borrow=True).shape[0]
+
+        #Initialize past visible layers (memory) at Null
+        past_visible = []
+        for i in range(self.log_crbm.delay):
+            past_visible.append(np.zeros(self.log_crbm.n_input))
+        concatenate_past_visible = np.concatenate(past_visible, axis=0)
+
+        #For each frames, predict label
+        chunk_predict_tab = []
+        chunk_real_tab = []
+        if (number_of_frames < self.log_crbm.delay*self.log_crbm.freq):
+            return
+        else :
+            print "The %d first frames used to initialize past visibles layers (ignored for PER)" %(self.log_crbm.delay*self.log_crbm.freq)
+        for index_frame in range(self.log_crbm.delay*self.log_crbm.freq,number_of_frames):
+            #propup this frame on each RBMs to get hidden representations
+            hidden_rbms = []
+            for index_rbm in range(5):
+                hidden_rbms.append(self.rbms[index_rbm].predict_hidden(data_rbms[index_rbm].get_value(borrow=True)[index_frame]))
+            concatenate_hidden_rbms = np.concatenate(hidden_rbms, axis=0)
+            #prop up to CRBM logistic
+            predict_label = self.log_crbm.predict_label(concatenate_hidden_rbms, concatenate_past_visible)
+            #print predict for this frame
+            print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
+            #add to chunk tab
+            chunk_predict_tab.append(int(predict_label))
+            chunk_real_tab.append(labelset[index_frame])
+            #Actualize past visible layers (memory)
+            for i in range(self.log_crbm.delay-1, 0, -1):
+                past_visible[i] = past_visible[i-1]
+            past_visible[0] = concatenate_hidden_rbms
+            concatenate_past_visible = np.concatenate(past_visible, axis=0)
+
+            if(index_frame%chunk_size==0 and index_frame!=self.log_crbm.delay*self.log_crbm.freq):
+                predict_chunk = 0
+                real_chunk = 0
+                #get the average predict label and real label on this chunk (chunk_size frames)
+                for label in range(1,self.log_crbm.n_label):
+                        if(chunk_predict_tab.count(label)>chunk_predict_tab.count(predict_chunk)):
+                            predict_chunk=label
+                        if(chunk_real_tab.count(label)>chunk_real_tab.count(real_chunk)):
+                            real_chunk=label
+                print "-> Chunk : Real label %d; label found %d \n" %(real_chunk, predict_chunk)
+                #actualize confusion matrix
+                confusion_matrix[predict_chunk,real_chunk]+=1
+                #clean chunk tabs
+                chunk_predict_tab[:]=[]
+                chunk_real_tab[:]=[]
+        end_time = timeit.default_timer()
+        recognition_time = (end_time - start_time)
+        print ('Time for recognition : %f secondes ; Duration of file : %f secondes.' %(recognition_time,number_of_frames/120.))
+        return confusion_matrix
 
 
 def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
                       rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
-                      crbm_training_epoch = 10, crbm_learning_rate = 1e-3, crbm_n_hidden = 450, crbm_n_delay=10, crbm_freq=3,
-                      finetune_epoch = 20000, finetune_learning_rate = 0.1, log_n_label=9):
+                      crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 300, crbm_n_delay=6, crbm_freq=10,
+                      finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
-    retrain_rbms = False
-    regenerate_crbm_dataset = False
+    retrain_rbms = True
+    regenerate_crbm_dataset = True
     retrain_crbm = True
 
     #First step : generate dataset from files
@@ -282,6 +319,40 @@ def create_train_tdbn(training_files=None, training_labels = None,
     tdbn = TDBN(rbms, log_crbm)
     return tdbn
 
+def confusion_matrix_analysis(confusion_matrix=None, n_labels=None):
+    print "\nConfusion matrix :"
+    print confusion_matrix
+    number_of_frames = np.sum(confusion_matrix)
+    print "Number of frames in the test dataset : %d" %number_of_frames
+    print "\n->Analysis :"
+    #for each gestures (label)
+    for i in range(n_labels):
+        print "Gesture label %d (gesture%d*.bvh):" %(i,i+1)
+        #determine confusion matrix
+        confusion_matrix_gesture = np.zeros((2,2))
+        TP,FN,FP,TN=0,0,0,0
+        TP = confusion_matrix[i,i]
+        FP = np.sum(confusion_matrix[:,i])-TP
+        FN = np.sum(confusion_matrix[i,:])-TP
+        TN = number_of_frames-(TP+FP+FN)
+
+        confusion_matrix_gesture[0,0] = TP
+        confusion_matrix_gesture[1,0] = FP
+        confusion_matrix_gesture[0,1] = FN
+        confusion_matrix_gesture[1,1] = TN
+        print confusion_matrix_gesture
+        precision = TP/(TP+FP)
+        recall = TP/(TP+FN)
+        accuracy = (TP+TN)/number_of_frames
+        f_measure = 2/((1/precision)+(1/recall))
+        print "Nb frames : %d" %(TP+FP)
+        print "Precision : %f %%" %(precision*100)
+        print "Recall : %f %%" %(recall*100)
+        print "Accuracy : %f %%" %(accuracy*100)
+        print "F_measure : %f %%" %(f_measure*100)
+        print "-------------"
+    PER = 1 - np.sum(np.diag(confusion_matrix))/number_of_frames
+    print "PER = %f %%" %(PER*100)
 
 if __name__ == '__main__':
     #Firstly, do you want to train a TDBN or do you want to test it
@@ -291,10 +362,10 @@ if __name__ == '__main__':
     training_files = ['data/geste1a.bvh','data/geste1b.bvh','data/geste1c.bvh', 'data/geste1d.bvh',
                       'data/geste2a.bvh','data/geste2b.bvh','data/geste2c.bvh', 'data/geste2d.bvh',
                       'data/geste3a.bvh','data/geste3b.bvh','data/geste3c.bvh', 'data/geste3d.bvh',
-                      'data/geste4a.bvh','data/geste4b.bvh','data/geste4c.bvh', 'data/geste4d.bvh',
+                      'data/geste13a.bvh','data/geste13b.bvh','data/geste13c.bvh', 'data/geste13d.bvh',
                       'data/geste5a.bvh','data/geste5b.bvh','data/geste5c.bvh', 'data/geste5d.bvh',
-                      'data/geste6a.bvh','data/geste6b.bvh','data/geste6c.bvh', 'data/geste6d.bvh',
-                      'data/geste7a.bvh','data/geste7b.bvh','data/geste7c.bvh', 'data/geste7d.bvh',
+                      'data/geste14a.bvh','data/geste14b.bvh','data/geste14c.bvh', 'data/geste14d.bvh',
+                      'data/geste18a.bvh','data/geste18b.bvh','data/geste18c.bvh', 'data/geste18d.bvh',
                       'data/geste8a.bvh','data/geste8b.bvh','data/geste8c.bvh', 'data/geste8d.bvh',
                       'data/geste10a.bvh','data/geste10b.bvh','data/geste10c.bvh', 'data/geste10d.bvh']
     training_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
@@ -302,10 +373,10 @@ if __name__ == '__main__':
     validation_files = ['data/geste1e.bvh','data/geste1f.bvh','data/geste1g.bvh','data/geste1h.bvh',
                         'data/geste2e.bvh','data/geste2f.bvh','data/geste2g.bvh','data/geste2h.bvh',
                         'data/geste3e.bvh','data/geste3f.bvh','data/geste3g.bvh','data/geste3h.bvh',
-                        'data/geste4e.bvh','data/geste4f.bvh','data/geste4g.bvh','data/geste4h.bvh',
+                        'data/geste13e.bvh','data/geste13f.bvh','data/geste13g.bvh','data/geste13h.bvh',
                         'data/geste5e.bvh','data/geste5f.bvh','data/geste5g.bvh','data/geste5h.bvh',
-                        'data/geste6e.bvh','data/geste6f.bvh','data/geste6g.bvh','data/geste6h.bvh',
-                        'data/geste7e.bvh','data/geste7f.bvh','data/geste7g.bvh','data/geste7h.bvh',
+                        'data/geste14e.bvh','data/geste14f.bvh','data/geste14g.bvh','data/geste14h.bvh',
+                        'data/geste18e.bvh','data/geste18f.bvh','data/geste18g.bvh','data/geste18h.bvh',
                         'data/geste8e.bvh','data/geste8f.bvh','data/geste8g.bvh','data/geste8h.bvh',
                         'data/geste10a.bvh','data/geste10a.bvh','data/geste10g.bvh','data/geste10h.bvh']
     validation_labels = [0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,6,6,6,6,7,7,7,7,8,8,8,8]
@@ -313,10 +384,10 @@ if __name__ == '__main__':
     test_files = ['data/geste1i.bvh',
                   'data/geste2i.bvh',
                   'data/geste3i.bvh',
-                  'data/geste4i.bvh',
+                  'data/geste13i.bvh',
                   'data/geste5i.bvh',
-                  'data/geste6i.bvh',
-                  'data/geste7i.bvh',
+                  'data/geste14i.bvh',
+                  'data/geste18i.bvh',
                   'data/geste8i.bvh',
                   'data/geste10i.bvh']
     test_labels = [0,1,2,3,4,5,6,7,8]
@@ -338,5 +409,11 @@ if __name__ == '__main__':
         print "Load TDBN..."
         tdbn = cPickle.load(open('trained_model/best_model_tdbn.pkl'))
         print "TDBN loaded from file."
-        #tdbn.recognize_file_with_minibatch('data/geste2h.bvh', 0) #Minibatch
-        tdbn.recognize_files_frame_by_frame(test_files, test_labels) #frame after frame
+        #tdbn.recognize_file_with_minibatch(test_files, test_labels) #using minibatch
+
+        confusion_matrix = np.zeros((tdbn.log_crbm.n_label,tdbn.log_crbm.n_label)) #REAL : column, #Predict : line
+        for file_index in range(len(test_files)):
+            print "Filename : "+test_files[file_index]+ " (label %d)" %test_labels[file_index]
+            confusion_matrix += tdbn.recognize_files_chunk(test_files[file_index], test_labels[file_index])
+            #confusion_matrix += tdbn.recognize_files_frame_by_frame(test_files[file_index], test_labels[file_index])
+        confusion_matrix_analysis(confusion_matrix, tdbn.log_crbm.n_label)
