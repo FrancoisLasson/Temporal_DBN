@@ -72,7 +72,7 @@ class TDBN(object):
         #get time for recognition
         start_time = timeit.default_timer()
         #First step : get dataset from file
-        data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(file, real_label)
+        data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset([file], [real_label])
         data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
         #Now, get the number of frames in this dataset (in the file we have to recognize)
         number_of_frames = data_rbms[0].get_value(borrow=True).shape[0]
@@ -87,7 +87,7 @@ class TDBN(object):
             return
         else :
             print "The %d first frames used to initialize past visibles layers (ignored for PER)" %(self.log_crbm.delay*self.log_crbm.freq)
-        for index_frame in range(self.log_crbm.delay*self.log_crbm.freq,number_of_frames):
+        for index_frame in range(number_of_frames):
             #propup this frame on each RBMs to get hidden representations
             hidden_rbms = []
             for index_rbm in range(5):
@@ -96,9 +96,13 @@ class TDBN(object):
 
             #prop up to CRBM logistic
             predict_label = self.log_crbm.predict_label(concatenate_hidden_rbms, concatenate_past_visible)
-            print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
-            #actualize confusion matrix
-            confusion_matrix[predict_label,labelset[index_frame]]+=1
+
+            if(index_frame >= self.log_crbm.delay*self.log_crbm.freq):
+                print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
+                #actualize confusion matrix
+                confusion_matrix[predict_label,labelset[index_frame]]+=1
+            else :
+                print "[Frame %d : Real label %d; label found %d] : Ignored (First %d frames used to initialize past visibles)" %(index_frame, labelset[index_frame], predict_label,(self.log_crbm.delay*self.log_crbm.freq))
             #Actualize past visible layers (memory)
             for i in range(self.log_crbm.delay-1, 0, -1):
                 past_visible[i] = past_visible[i-1]
@@ -139,9 +143,7 @@ class TDBN(object):
         chunk_real_tab = []
         if (number_of_frames < self.log_crbm.delay*self.log_crbm.freq):
             return
-        else :
-            print "The %d first frames used to initialize past visibles layers (ignored for PER)" %(self.log_crbm.delay*self.log_crbm.freq)
-        for index_frame in range(self.log_crbm.delay*self.log_crbm.freq,number_of_frames):
+        for index_frame in range(number_of_frames):
             #propup this frame on each RBMs to get hidden representations
             hidden_rbms = []
             for index_rbm in range(5):
@@ -149,18 +151,21 @@ class TDBN(object):
             concatenate_hidden_rbms = np.concatenate(hidden_rbms, axis=0)
             #prop up to CRBM logistic
             predict_label = self.log_crbm.predict_label(concatenate_hidden_rbms, concatenate_past_visible)
-            #print predict for this frame
-            print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
-            #add to chunk tab
-            chunk_predict_tab.append(int(predict_label))
-            chunk_real_tab.append(labelset[index_frame])
+            if(index_frame >= self.log_crbm.delay*self.log_crbm.freq):
+                #print predict for this frame
+                print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
+                #add to chunk tab
+                chunk_predict_tab.append(int(predict_label))
+                chunk_real_tab.append(labelset[index_frame])
+            else :
+                print "[Frame %d : Real label %d; label found %d] : Ignored (First %d frames used to initialize past visibles)" %(index_frame, labelset[index_frame], predict_label,(self.log_crbm.delay*self.log_crbm.freq))
             #Actualize past visible layers (memory)
             for i in range(self.log_crbm.delay-1, 0, -1):
                 past_visible[i] = past_visible[i-1]
             past_visible[0] = concatenate_hidden_rbms
             concatenate_past_visible = np.concatenate(past_visible, axis=0)
 
-            if(index_frame%chunk_size==0 and index_frame!=self.log_crbm.delay*self.log_crbm.freq):
+            if(index_frame%chunk_size==0 and index_frame>self.log_crbm.delay*self.log_crbm.freq):
                 predict_chunk = 0
                 real_chunk = 0
                 #get the average predict label and real label on this chunk (chunk_size frames)
@@ -190,9 +195,9 @@ def create_train_tdbn(training_files=None, training_labels = None,
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
-    retrain_rbms = True
-    regenerate_crbm_dataset = True
-    retrain_crbm = True
+    retrain_rbms = False
+    regenerate_crbm_dataset = False
+    retrain_crbm = False
 
     #First step : generate dataset from files
     data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(training_files, training_labels)
@@ -403,6 +408,7 @@ if __name__ == '__main__':
         #save our network
         with open('trained_model/best_model_tdbn.pkl', 'w') as f:
             cPickle.dump(tdbn, f)
+        print "TDBN network is saved!"
 
     #Else, you have already trained a TDBN and you want to test it
     else :
