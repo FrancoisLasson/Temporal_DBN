@@ -119,18 +119,24 @@ class TDBN(object):
     """The recognize_file function is used to predict labels of chunks and determine PER(several frames)"""
     def recognize_files_chunk(self, file=None, real_label = None):
         #recognize frames using chunk and average value on chunk
-        chunk_size = 240 #number of frames in a chunk
-        chunk_covering = 30 #number of frames for covering
+        chunk_size = 120 #number of frames in a chunk
+        chunk_covering = 110 #number of frames for covering
 
-        #confusion matrix : https://ccrma.stanford.edu/workshops/mir2009/references/ROCintro.pdf
-        confusion_matrix = np.zeros((self.log_crbm.n_label,self.log_crbm.n_label)) #REAL : column, #Predict : line
-        #get time for recognition
-        start_time = timeit.default_timer()
         #First step : get dataset from file
         data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset([file], [real_label])
         data_rbms = [data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4]
         #Now, get the number of frames in this dataset (in the file we have to recognize)
         number_of_frames = data_rbms[0].get_value(borrow=True).shape[0]
+        #Check size
+        nb_frames_initialization = self.log_crbm.delay*self.log_crbm.freq #number of frames required for past visibles initialization
+        if (number_of_frames < nb_frames_initialization):
+            return
+
+        #confusion matrix : https://ccrma.stanford.edu/workshops/mir2009/references/ROCintro.pdf
+        confusion_matrix = np.zeros((self.log_crbm.n_label,self.log_crbm.n_label)) #REAL : column, #Predict : line
+
+        #get time for recognition
+        start_time = timeit.default_timer()
 
         #Initialize past visible layers (memory) at Null
         past_visible = []
@@ -138,12 +144,22 @@ class TDBN(object):
             past_visible.append(np.zeros(self.log_crbm.n_input))
         concatenate_past_visible = np.concatenate(past_visible, axis=0)
 
-        #For each frames, predict label
-        chunk_predict_tab = []
-        chunk_real_tab = []
-        if (number_of_frames < self.log_crbm.delay*self.log_crbm.freq):
-            return
+        #list of chunks : every chunks are present in these list
+        all_chunks_predict = []
+        all_chunks_real = []
+
+        """ #TODO : Perhaps faster with the scan function
+        #Tuto instance
+        result, updates = theano.scan(fn=lambda prior_result, A: prior_result * A,
+                              outputs_info=T.ones_like(A),
+                              non_sequences=A,
+                              n_steps=number_of_frames)
+        """
         for index_frame in range(number_of_frames):
+            if((index_frame-nb_frames_initialization)%(chunk_size-chunk_covering)==0 and index_frame>=nb_frames_initialization):
+                    all_chunks_predict.append([])
+                    all_chunks_real.append([])
+
             #propup this frame on each RBMs to get hidden representations
             hidden_rbms = []
             for index_rbm in range(5):
@@ -151,35 +167,38 @@ class TDBN(object):
             concatenate_hidden_rbms = np.concatenate(hidden_rbms, axis=0)
             #prop up to CRBM logistic
             predict_label = self.log_crbm.predict_label(concatenate_hidden_rbms, concatenate_past_visible)
-            if(index_frame >= self.log_crbm.delay*self.log_crbm.freq):
-                #print predict for this frame
-                print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
-                #add to chunk tab
-                chunk_predict_tab.append(int(predict_label))
-                chunk_real_tab.append(labelset[index_frame])
-            else :
-                print "[Frame %d : Real label %d; label found %d] : Ignored (First %d frames used to initialize past visibles)" %(index_frame, labelset[index_frame], predict_label,(self.log_crbm.delay*self.log_crbm.freq))
             #Actualize past visible layers (memory)
             for i in range(self.log_crbm.delay-1, 0, -1):
                 past_visible[i] = past_visible[i-1]
             past_visible[0] = concatenate_hidden_rbms
             concatenate_past_visible = np.concatenate(past_visible, axis=0)
 
-            if(index_frame%chunk_size==0 and index_frame>self.log_crbm.delay*self.log_crbm.freq):
+            if(index_frame >= nb_frames_initialization):
+                #print predict for this frame
+                print "Frame %d : Real label %d; label found %d" %(index_frame, labelset[index_frame], predict_label)
+                #add to each chunks
+                for index_chunk in range(len(all_chunks_predict)):
+                    all_chunks_predict[index_chunk].append(int(predict_label))
+                    all_chunks_real[index_chunk].append(labelset[index_frame])
+            else :
+                print "[Frame %d : Real label %d; label found %d] : Ignored (First %d frames used to initialize past visibles)" %(index_frame, labelset[index_frame], predict_label,(self.log_crbm.delay*self.log_crbm.freq))
+
+            if(len(all_chunks_predict)>0 and len(all_chunks_predict[0])%chunk_size==0):
                 predict_chunk = 0
                 real_chunk = 0
                 #get the average predict label and real label on this chunk (chunk_size frames)
                 for label in range(1,self.log_crbm.n_label):
-                        if(chunk_predict_tab.count(label)>chunk_predict_tab.count(predict_chunk)):
+                        if(all_chunks_predict[0].count(label)>all_chunks_predict[0].count(predict_chunk)):
                             predict_chunk=label
-                        if(chunk_real_tab.count(label)>chunk_real_tab.count(real_chunk)):
+                        if(all_chunks_real[0].count(label)>all_chunks_real[0].count(real_chunk)):
                             real_chunk=label
                 print "-> Chunk : Real label %d; label found %d \n" %(real_chunk, predict_chunk)
                 #actualize confusion matrix
                 confusion_matrix[predict_chunk,real_chunk]+=1
-                #clean chunk tabs
-                chunk_predict_tab[:]=[]
-                chunk_real_tab[:]=[]
+                #delete this chunk from lists
+                del all_chunks_predict[0]
+                del all_chunks_real[0]
+
         end_time = timeit.default_timer()
         recognition_time = (end_time - start_time)
         print ('Time for recognition : %f secondes ; Duration of file : %f secondes.' %(recognition_time,number_of_frames/120.))
@@ -328,7 +347,7 @@ def confusion_matrix_analysis(confusion_matrix=None, n_labels=None):
     print "\nConfusion matrix :"
     print confusion_matrix
     number_of_frames = np.sum(confusion_matrix)
-    print "Number of frames in the test dataset : %d" %number_of_frames
+    print "Number of frames (or chunks) in the test dataset : %d" %number_of_frames
     print "\n->Analysis :"
     #for each gestures (label)
     for i in range(n_labels):
@@ -361,7 +380,7 @@ def confusion_matrix_analysis(confusion_matrix=None, n_labels=None):
 
 if __name__ == '__main__':
     #Firstly, do you want to train a TDBN or do you want to test it
-    do_training_phase = True
+    do_training_phase = False
     #To create a TDBN, we have to train our model, validate his training and test it
     #To do that, we have to define BVH files use to create datasets and their associate labels
     training_files = ['data/geste1a.bvh','data/geste1b.bvh','data/geste1c.bvh', 'data/geste1d.bvh',
