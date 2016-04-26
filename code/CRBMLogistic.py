@@ -239,8 +239,8 @@ class LOGISTIC_CRBM(object):
 
     def predict_label(self, crbm_visible, crbm_past_visible) :
         #Define a theano function
-        visible = T.dvector()
-        past_visible = T.dvector()
+        visible = T.vector()
+        past_visible = T.vector()
         input_log = T.nnet.sigmoid(T.dot(visible, self.crbm_layer.W)+ T.dot(past_visible, self.crbm_layer.B) + self.crbm_layer.hbias)
         output_log = T.nnet.softmax(T.dot(input_log, self.logLayer.W) + self.logLayer.b)
         prediction = T.argmax(output_log, axis=1)[0]

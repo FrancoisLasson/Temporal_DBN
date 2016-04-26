@@ -341,7 +341,7 @@ class RBM(object):
 
     def predict_hidden(self, frame=None) :
         #declare theano function
-        visible = T.dvector('input')
+        visible = T.vector('input')
         [pre_sigmoid_hidden, hidden, hidden_sample] = self.sample_h_given_v(visible)
         f = theano.function([visible], hidden_sample) #sample with a binomial
         return f(frame)
@@ -431,8 +431,16 @@ if __name__ == '__main__':
 
     #To create a RBM, we have to train our model from training files
     #To do that, we have to define BVH files use to create datasets, i.e. a training set
-    training_files = ['data/35_01.bvh','data/35_02.bvh','data/35_03.bvh','data/35_19.bvh','data/35_17.bvh','data/35_18.bvh']
-    training_labels = [0,0,0,1,1,1] #unused here, but must to be due to generate_dataset function
+    training_files = ['data/geste1i.bvh',
+                  'data/geste2i.bvh',
+                  'data/geste3i.bvh',
+                  'data/geste13i.bvh',
+                  'data/geste5i.bvh',
+                  'data/geste14i.bvh',
+                  'data/geste18i.bvh',
+                  'data/geste8i.bvh',
+                  'data/geste10i.bvh']
+    training_labels = [0,1,2,3,4,5,6,7,8]
     #Here, there are two possibilities :
     #You're prevously chosen to train a RBM, so create it and save it
     if do_training_phase:
@@ -446,14 +454,29 @@ if __name__ == '__main__':
     else :
         #load our Network
         rbm = cPickle.load(open('best_model_rbm.pkl'))
-        files = ['data/35_01.bvh'] #Mocap file used to test RBM
-        labels = [0] #Useless but must to be due to generate_dataset function
+        #file and real label
+        files = ['data/geste8i.bvh'] #Mocap file used to test RBM
+        labels = [7] #Useless but must to be due to generate_dataset function
+
+        #predict frame after frame : function
+        #input RBM var
+        frame = numpy.ones(rbm.n_visible).astype(theano.config.floatX)
+        input = theano.shared(frame.astype(theano.config.floatX), name='input')
+        #function to propup
+        output_sigmoid_value = T.nnet.sigmoid(T.dot(input, rbm.W) + rbm.hbias)
+        output_sample = rbm.theano_rng.binomial(size=output_sigmoid_value.shape,
+                                                n=1, p=output_sigmoid_value,
+                                                dtype=theano.config.floatX)
+        prop_up_func = theano.function([], output_sample)
+
         data = generate_dataset(files, labels)[0]
         number_of_frames = data.get_value(borrow=True).shape[0]
         for index_frame in range(number_of_frames):
             frame_in = data.get_value(borrow=True)[index_frame]
+            input.set_value(frame_in)
             print "Frame %d: " %index_frame
-            print frame_in
+            #print frame_in
             print "Get hidden label : "
-            print rbm.predict_hidden(frame_in)
+            print prop_up_func()
+            #print rbm.predict_hidden(frame_in)
             print "--------------------"
