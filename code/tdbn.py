@@ -73,8 +73,8 @@ class TDBN(object):
     """
     def recognize_files_chunk(self, file=None, real_label = None):
         #recognize frames using chunk and average value on chunk
-        chunk_size = 240 #number of frames in a chunk
-        chunk_covering = 120  #number of frames for covering
+        chunk_size = 120 #number of frames in a chunk
+        chunk_covering = 119  #number of frames for covering
         #to recognize frame by frame : chunk_size=1 and chunk_covering=0
 
         #confusion matrix : https://ccrma.stanford.edu/workshops/mir2009/references/ROCintro.pdf
@@ -181,9 +181,9 @@ def create_train_tdbn(training_files=None, training_labels = None,
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
-    retrain_rbms = False
-    regenerate_crbm_dataset = False
-    retrain_crbm = False
+    retrain_rbms = True
+    regenerate_crbm_dataset = True
+    retrain_crbm = True
 
     #First step : generate dataset from files
     data_rbms_0, data_rbms_1, data_rbms_2, data_rbms_3, data_rbms_4, labelset, seqlen = generate_dataset(training_files, training_labels)
@@ -192,10 +192,12 @@ def create_train_tdbn(training_files=None, training_labels = None,
     #In order to have an idea of cost evolution during training phase (convergence, oscilation, etc.) we save their prints in a plot.
     #So, we have create and initialize a pyplot
     if (retrain_rbms) :
+        #for plot :
         title = "RBMs training phase : \n epoch="+str(rbm_training_epoch)+"; Number of hidden= "+str(rbm_n_hidden)+"; Learning rate="+str(rbm_learning_rate)
         plt.title(title)
         plt.ylabel("Cost")
         plt.xlabel("Epoch")
+        #number of epoch is the plot abscisse
         x= xrange(rbm_training_epoch)
 
     #Now, if user have choosen to retrain RBMs, we train new RBMs from the datasets previously generated. Else, we just reload RBMs from pkl files
@@ -224,6 +226,17 @@ def create_train_tdbn(training_files=None, training_labels = None,
     dataname = ['trained_model/dataset_train.pkl','trained_model/dataset_valid.pkl','trained_model/dataset_test.pkl']
     labelname = ['trained_model/labelset_train.pkl','trained_model/labelset_valid.pkl','trained_model/labelset_test.pkl']
     if(regenerate_crbm_dataset):
+        #propagation up function using shared variable for gpu optimization
+        shared_input_tab = [] #shared inputs for our 5 rbms
+        for index_rbm in range(5):
+            input_type = np.zeros(rbms[index_rbm].n_visible).astype(theano.config.floatX)
+            shared_input_tab.append(theano.shared(input_type.astype(theano.config.floatX)))
+        output_rbm_sample = []
+        for index_rbm in range(5):
+            output_sigmoid_value = T.nnet.sigmoid(T.dot(shared_input_tab[index_rbm], rbms[index_rbm].W) + rbms[index_rbm].hbias)
+            output_rbm_sample.append(rbms[index_rbm].theano_rng.binomial(size=output_sigmoid_value.shape,n=1, p=output_sigmoid_value,dtype=theano.config.floatX))
+        concatenate_hidden_rbms = T.concatenate(output_rbm_sample, axis=0)
+        prop_up_func = theano.function([], concatenate_hidden_rbms)
         #In fact, we have to generate three dataset : one for training phase, one for validation and one for test
         for i in range(3):
             if(i==0): #training phase
@@ -241,19 +254,14 @@ def create_train_tdbn(training_files=None, training_labels = None,
             #propup dataset from visible to hidden layers of RBMs in order to generate data set for crbm
             dataset_crbm = []
             number_of_samples = data_rbms[0].get_value(borrow=True).shape[0] #all datas have same size, so data_trunk have been choosen but it could be replace by another
-            for index_data in range(number_of_samples):
-                hidden_rbms = []
+            for index_frame in range(number_of_samples):
                 for index_rbm in range(5):
-                    #propup the index_data frame on rbms
-                    frame = data_rbms[index_rbm].get_value(borrow=True)[index_data]
-                    prop_up = rbms[index_rbm].predict_hidden(frame)
-                    hidden_rbms.append(prop_up)
-                #concanate output of rbms in order to get only one frame for CRBM
-                concatenated_hidden_rbms = np.concatenate((hidden_rbms[0], hidden_rbms[1], hidden_rbms[2], hidden_rbms[3], hidden_rbms[4]), axis=0)
+                    shared_input_tab[index_rbm].set_value(data_rbms[index_rbm].get_value(borrow=True)[index_frame])
+                    concatenate_hidden_rbms = prop_up_func()
                 #add this to dataset_crbm
-                dataset_crbm.append(concatenated_hidden_rbms)
-                if(index_data%(number_of_samples//100)==0):
-                    print ('CRBM dataset generation %d : %d %%' %(i,((100*index_data/number_of_samples)+1)) )
+                dataset_crbm.append(concatenate_hidden_rbms)
+                if(index_frame%(number_of_samples//100)==0):
+                    print ('CRBM dataset generation %d : %d %%' %(i,((100*index_frame/number_of_samples)+1)) )
 
             with open(dataname[i], 'w') as f:
                 cPickle.dump(dataset_crbm, f)
@@ -347,7 +355,7 @@ def confusion_matrix_analysis(confusion_matrix=None, n_labels=None):
 
 if __name__ == '__main__':
     #Firstly, do you want to train a TDBN or do you want to test it
-    do_training_phase = False
+    do_training_phase = True
     #To create a TDBN, we have to train our model, validate his training and test it
     #To do that, we have to define BVH files use to create datasets and their associate labels
     training_files = ['data/geste1a.bvh','data/geste1b.bvh','data/geste1c.bvh', 'data/geste1d.bvh',
