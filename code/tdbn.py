@@ -73,8 +73,8 @@ class TDBN(object):
     """
     def recognize_files_chunk(self, file=None, real_label = None):
         #recognize frames using chunk and average value on chunk
-        chunk_size = 120 #number of frames in a chunk
-        chunk_covering = 119  #number of frames for covering
+        chunk_size = 1 #number of frames in a chunk
+        chunk_covering = 0  #number of frames for covering
         #to recognize frame by frame : chunk_size=1 and chunk_covering=0
 
         #confusion matrix : https://ccrma.stanford.edu/workshops/mir2009/references/ROCintro.pdf
@@ -175,9 +175,9 @@ class TDBN(object):
 def create_train_tdbn(training_files=None, training_labels = None,
                       validation_files=None, validation_labels = None,
                       test_files=None, test_labels = None,
-                      rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 100,
+                      rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=30, batch_size = 1000,
                       crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden = 300, crbm_n_delay=6, crbm_freq=10,
-                      finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9):
+                      finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9, plot_filename=None):
 
     #Train or load? User have choice in case where *.pkl (pretrain models saves) exist
     """Do you want to retrain all rbms? crbm? regenerate crbm dataset? This step must be done in case of a new dataset"""
@@ -217,7 +217,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
     #save plot (name depend of time)
     if (retrain_rbms) :
         plt.legend(loc=4)
-        plot_name = 'plot/rbm_'+str(timeit.default_timer())+'.png'
+        #plot_name = 'plot/rbm_'+str(timeit.default_timer())+'.png'
+        plot_name = plot_filename+"plot_cost_RBMs.png"
         plt.savefig(plot_name)
         print "RBMs plot is saved!"
         plt.clf() #without this line, all is plot in the same figure
@@ -305,7 +306,8 @@ def create_train_tdbn(training_files=None, training_labels = None,
     plt.ylabel("PER_test")
     plt.xlabel("epoch")
     plt.plot(PER_x_test,PER_y_test)
-    plot_name = 'plot/PER_crbm_'+str(timeit.default_timer())+'.png'
+    #plot_name = 'plot/PER_crbm_'+str(timeit.default_timer())+'.png'
+    plot_name = plot_filename+"plot_PER_CRBM.png"
     plt.savefig(plot_name)
     print "CRBM PER plot is saved!"
     plt.clf() #without this line, all is plot in the same figure
@@ -316,17 +318,29 @@ def create_train_tdbn(training_files=None, training_labels = None,
     print ('Temporal DBN : Training took %f minutes' % (pretraining_time / 60.))
     #Last step, create and return Temporal Deep Belief Net
     tdbn = TDBN(rbms, log_crbm)
-    return tdbn
+    #store plot
+    with open(plot_filename+"_rbm_cost.pkl", 'w') as f:
+            cPickle.dump(cost_rbms, f)
+    with open(plot_filename+"_PER_valid_x.pkl", 'w') as f:
+            cPickle.dump(PER_x_valid, f)
+    with open(plot_filename+"_PER_valid_y.pkl", 'w') as f:
+            cPickle.dump(PER_y_valid, f)
+    with open(plot_filename+"_PER_test_x.pkl", 'w') as f:
+            cPickle.dump(PER_x_test, f)
+    with open(plot_filename+"_PER_test_y.pkl", 'w') as f:
+            cPickle.dump(PER_y_test, f)
+    return tdbn, pretraining_time
 
-def confusion_matrix_analysis(confusion_matrix=None, n_labels=None):
-    print "\nConfusion matrix :"
-    print confusion_matrix
+def confusion_matrix_analysis(confusion_matrix=None, n_labels=None, filename=None):
+    output_file = open(filename, "w")
+    output_file.write("Confusion matrix :\n")
+    np.savetxt(output_file,confusion_matrix)
     number_of_frames = np.sum(confusion_matrix)
-    print "Number of frames (or chunks) in the test dataset : %d" %number_of_frames
-    print "\n->Analysis :"
+    output_file.write("Number of frames (or chunks) in the test dataset : %d\n" %number_of_frames)
+    output_file.write("\n->Analysis :\n")
     #for each gestures (label)
     for i in range(n_labels):
-        print "Gesture label %d (gesture%d*.bvh):" %(i,i+1)
+        output_file.write("Gesture label %d (gesture%d*.bvh):\n" %(i,i+1))
         #determine confusion matrix
         confusion_matrix_gesture = np.zeros((2,2))
         TP,FN,FP,TN=0,0,0,0
@@ -339,19 +353,20 @@ def confusion_matrix_analysis(confusion_matrix=None, n_labels=None):
         confusion_matrix_gesture[1,0] = FP
         confusion_matrix_gesture[0,1] = FN
         confusion_matrix_gesture[1,1] = TN
-        print confusion_matrix_gesture
+        np.savetxt(output_file,confusion_matrix_gesture)
         precision = TP/(TP+FP)
         recall = TP/(TP+FN)
         accuracy = (TP+TN)/number_of_frames
         f_measure = 2/((1/precision)+(1/recall))
-        print "Nb frames : %d" %(TP+FP)
-        print "Precision : %f %%" %(precision*100)
-        print "Recall : %f %%" %(recall*100)
-        print "Accuracy : %f %%" %(accuracy*100)
-        print "F_measure : %f %%" %(f_measure*100)
-        print "-------------"
+        output_file.write("Nb frames : %d\n" %(TP+FP))
+        output_file.write("Precision : %f %%\n" %(precision*100))
+        output_file.write("Recall : %f %%\n" %(recall*100))
+        output_file.write("Accuracy : %f %%\n" %(accuracy*100))
+        output_file.write("F_measure : %f %%\n" %(f_measure*100))
+        output_file.write("-------------\n")
     PER = 1 - np.sum(np.diag(confusion_matrix))/number_of_frames
-    print "PER = %f %%" %(PER*100)
+    output_file.write("PER = %f %% (for frame by frame analysis)" %(PER*100))
+    output_file.close()
 
 if __name__ == '__main__':
     #Firstly, do you want to train a TDBN or do you want to test it
@@ -391,6 +406,53 @@ if __name__ == '__main__':
                   'data/geste10i.bvh']
     test_labels = [0,1,2,3,4,5,6,7,8]
 
+
+    ###EXPERIMENTS#######
+    rbm_hidden_tab=[10,30,50]
+    crbm_hidden_tab=[100,300,500]
+    crbm_delay_tab=[6,9,15]
+    crbm_freq_tab=[3,5,10,15]
+    expe=0
+    info_file = open("list_expe_time.txt", "w")
+
+    for a in range(3):
+        for b in range(3):
+            for c in range(3):
+                for d in range(4):
+
+                    filename = "plot/expe"+str(expe)
+
+                    tdbn, training_time = create_train_tdbn(
+                                        training_files = training_files, training_labels = training_labels,
+                                        validation_files= validation_files, validation_labels = validation_labels,
+                                        test_files = test_files, test_labels = test_labels,
+                                        rbm_training_epoch = 10000, rbm_learning_rate=1e-3, rbm_n_hidden=rbm_hidden_tab[a], batch_size = 500,
+                                        crbm_training_epoch = 10000, crbm_learning_rate = 1e-3, crbm_n_hidden =crbm_hidden_tab[b], crbm_n_delay=crbm_delay_tab[c], crbm_freq=crbm_freq_tab[d],
+                                        finetune_epoch = 10000, finetune_learning_rate = 0.1, log_n_label=9, plot_filename=filename)
+
+                    confusion_matrix = np.zeros((tdbn.log_crbm.n_label,tdbn.log_crbm.n_label)) #REAL : column, #Predict : line
+                    for file_index in range(len(test_files)):
+                        print "Filename : "+test_files[file_index]+ " (label %d)" %test_labels[file_index]
+                        confusion_matrix += tdbn.recognize_files_chunk(test_files[file_index], test_labels[file_index])
+                    confusion_name = filename+"_confusion_mat_number.txt"
+                    confusion_matrix_analysis(confusion_matrix, tdbn.log_crbm.n_label, confusion_name)
+
+                    info_file.write("Experience number ")
+                    info_file.write(str(expe))
+                    info_file.write("training time : ")
+                    info_file.write(str(training_time/60.))
+                    info_file.write(" rbm hidden : ")
+                    info_file.write(str(rbm_hidden_tab[a]))
+                    info_file.write(" crbm hidden : ")
+                    info_file.write(str(crbm_hidden_tab[b]))
+                    info_file.write(" crbm delay : ")
+                    info_file.write(str(crbm_delay_tab[c]))
+                    info_file.write(" crbm freq : ")
+                    info_file.write(str(crbm_freq_tab[d]))
+                    expe+=1
+    info_file.close()
+
+    """
     #Here, there are two possibilities :
     #You're prevously chosen to train a TDBN, so create it and save it
     if do_training_phase:
@@ -398,7 +460,7 @@ if __name__ == '__main__':
         tdbn = create_train_tdbn(
                             training_files = training_files, training_labels = training_labels,
                             validation_files= validation_files, validation_labels = validation_labels,
-                            test_files = test_files, test_labels = test_labels)
+                            test_files = test_files, test_labels = test_labels, plot_filename="plot/test")
         #save our network
         with open('trained_model/best_model_tdbn.pkl', 'w') as f:
             cPickle.dump(tdbn, f)
@@ -414,4 +476,5 @@ if __name__ == '__main__':
         for file_index in range(len(test_files)):
             print "Filename : "+test_files[file_index]+ " (label %d)" %test_labels[file_index]
             confusion_matrix += tdbn.recognize_files_chunk(test_files[file_index], test_labels[file_index])
-        confusion_matrix_analysis(confusion_matrix, tdbn.log_crbm.n_label)
+        confusion_matrix_analysis(confusion_matrix, tdbn.log_crbm.n_label, "plot/confusion_mat_number.txt")
+    """

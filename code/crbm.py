@@ -13,7 +13,7 @@ import numpy as np
 import theano
 import theano.tensor as T
 #theano Random
-from theano.tensor.shared_randomstreams import RandomStreams
+from theano.sandbox.rng_mrg import MRG_RandomStreams
 
 #Use to compute learning time
 import timeit
@@ -71,7 +71,7 @@ class CRBM(object):
             # create a number generator
             numpy_rng = np.random.RandomState(1234)
         if theano_rng is None:
-            theano_rng = RandomStreams(numpy_rng.randint(2 ** 30))
+            theano_rng = MRG_RandomStreams(numpy_rng.randint(2 ** 30))
 
         #Initialize weight matrices and biases
         if W is None:
@@ -376,17 +376,13 @@ def create_train_crbm(learning_rate=1e-3, training_epochs=10000,
     :param batch_size: size of a batch used to train the RBM
     """
 
-    rng = np.random.RandomState(123)
-    theano_rng = RandomStreams(rng.randint(2 ** 30))
-
     n_dim =  dataset.get_value(borrow=True).shape[1]
 
     x = T.matrix('x')  # the data
     x_history = T.matrix('x_history')
 
     # construct the CRBM class
-    crbm = CRBM(input=x, input_history=x_history, n_visible=n_dim, n_hidden=n_hidden, delay=delay, freq=freq,
-                numpy_rng=rng, theano_rng=theano_rng)
+    crbm = CRBM(input=x, input_history=x_history, n_visible=n_dim, n_hidden=n_hidden, delay=delay, freq=freq)
 
     crbm.train(learning_rate=learning_rate, training_epochs=training_epochs, dataset=dataset, seqlen= seqlen, batch_size=batch_size)
     return crbm

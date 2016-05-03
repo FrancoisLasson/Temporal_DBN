@@ -11,7 +11,6 @@ import theano
 import theano.tensor as T
 #theano Random
 from theano.sandbox.rng_mrg import MRG_RandomStreams
-from theano.tensor.shared_randomstreams import RandomStreams
 #Use to compute learning time
 import timeit
 #Use to save trained model or dataset

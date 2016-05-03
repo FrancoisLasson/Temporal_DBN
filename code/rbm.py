@@ -12,7 +12,7 @@ import numpy
 import theano
 import theano.tensor as T
 #theano Random
-from theano.tensor.shared_randomstreams import RandomStreams
+from theano.sandbox.rng_mrg import MRG_RandomStreams
 
 #Use to compute learning time
 import timeit
@@ -20,6 +20,8 @@ import timeit
 import cPickle
 #This class used to generate dataset readable by RBMs from BVH files
 from motion import generate_dataset
+
+#from theano.sandbox.cuda import cuda_available
 
 class RBM(object):
     """Restricted Boltzmann Machine (RBM)  """
@@ -58,7 +60,7 @@ class RBM(object):
             numpy_rng = numpy.random.RandomState(1234)
 
         if theano_rng is None:
-            theano_rng = RandomStreams(numpy_rng.randint(2 ** 30))
+            theano_rng = MRG_RandomStreams(numpy_rng.randint(2 ** 30)) #, use_cuda = True)
 
         if W is None:
             # W is initialized with `initial_W` which is uniformely
@@ -108,6 +110,7 @@ class RBM(object):
         self.hbias = hbias
         self.vbias = vbias
         self.theano_rng = theano_rng
+        self.numpy_rng = numpy_rng
         # **** WARNING: It is not a good idea to put things in this list
         # other than shared variables created in this function.
         self.params = [self.W, self.hbias, self.vbias]
@@ -327,7 +330,6 @@ class RBM(object):
         that Theano can catch and optimize the expression.
 
         """
-
         cross_entropy = T.mean(
             T.sum(
                 self.input * T.log(T.nnet.sigmoid(pre_sigmoid_nv)) +
@@ -346,8 +348,8 @@ class RBM(object):
         return f(frame)
 
 
-def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
-             dataset=None, seqlen = None, batch_size=20, n_hidden=30):
+def create_train_rbm(learning_rate=1e-3, training_epochs=200,
+             dataset=None, seqlen = None, batch_size=1000, n_hidden=30):
     """
     Demonstrate how to train a RBM
     :param learning_rate: learning rate used for training the RBM
@@ -357,9 +359,6 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
     :param n_chains: number of parallel Gibbs chains to be used for sampling
     :param n_samples: number of samples to plot for each chain
     """
-    #for random generation :seed
-    rng = numpy.random.RandomState(123)
-    theano_rng = RandomStreams(rng.randint(2 ** 30))
     # compute number of minibatches for training, validation and testing
     n_train_batches = dataset.get_value(borrow=True).shape[0] / batch_size #number of minibatch
     n_dim = dataset.get_value(borrow=True).shape[1] #number of data in each frames
@@ -373,7 +372,7 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
     persistent_chain = theano.shared(numpy.zeros((batch_size, n_hidden), dtype=theano.config.floatX), borrow=True)
 
     # construct the RBM class
-    rbm = RBM(input=x, n_visible=n_dim, n_hidden=n_hidden, numpy_rng=rng, theano_rng=theano_rng)
+    rbm = RBM(input=x, n_visible=n_dim, n_hidden=n_hidden)
 
     # get the cost and the gradient corresponding to one step of CD-15
     cost, updates = rbm.get_cost_updates(lr=learning_rate, persistent=persistent_chain, k=1)
@@ -402,7 +401,7 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
         datasetindex += range(last, last + s)
         last += s
     permindex = numpy.array(datasetindex)
-    rng.shuffle(permindex)
+    rbm.numpy_rng.shuffle(permindex)
 
     #In order visualize cost evolution during training phase
     cost_y = []
@@ -420,130 +419,6 @@ def create_train_rbm(learning_rate=1e-3, training_epochs=5000,
     pretraining_time = (end_time - start_time) - plotting_time
     print ('RBM : Training took %f minutes' % (pretraining_time / 60.))
     return rbm, cost_y
-
-"""
-def create_train_rbm_GPU(learning_rate=1e-3, training_epochs=5000,
-             dataset=None, seqlen = None, batch_size=20, n_hidden=30):
-    #for random generation :seed
-    rng = numpy.random.RandomState(123)
-    theano_rng = RandomStreams(rng.randint(2 ** 30))
-    # compute number of minibatches for training, validation and testing
-    n_train_batches = dataset.get_value(borrow=True).shape[0] / batch_size #number of minibatch
-    n_dim = dataset.get_value(borrow=True).shape[1] #number of data in each frames
-
-    # allocate shared variables for the data : gpu optimization
-    x_type = numpy.zeros((n_dim,batch_size)).astype(theano.config.floatX)
-    shared_x = theano.shared(x_type.astype(theano.config.floatX))
-    h_type = numpy.zeros((n_hidden,batch_size)).astype(theano.config.floatX)
-    shared_h = theano.shared(h_type.astype(theano.config.floatX))
-
-    # initialize storage for the persistent chain (state = hidden layer of chain)
-    persistent_chain = theano.shared(numpy.zeros((batch_size, n_hidden), dtype=theano.config.floatX), borrow=True)
-    # construct the RBM class
-    rbm = RBM(input=shared_x, n_visible=n_dim, n_hidden=n_hidden, numpy_rng=rng, theano_rng=theano_rng)
-
-    #prop up and sample visible
-    h_pre = T.dot(shared_x, rbm.W) + rbm.hbias
-    h_mean = T.nnet.sigmoid(h_pre)
-    h_sample = theano_rng.binomial(size=h_mean.shape, n=1, p=h_mean, dtype=theano.config.floatX)
-    propup_sample = theano.function([], [h_pre, h_mean, h_sample])
-    #prop up and sample visible
-
-
-    v_pre = T.dot(shared_h, rbm.W) + rbm.vbias
-    v_mean = T.nnet.sigmoid(v_pre)
-    v_sample = theano_rng.binomial(size=v_mean.shape, n=1, p=v_mean, dtype=theano.config.floatX)
-    propdown_sample = theano.function([], [v_pre, v_mean, v_sample])
-    #gibbs hvh
-    print "ok\n\n\n\n"
-    v_pre_2,v_mean_2,v_sample_2=propdown_sample()
-    h_pre_2, h_mean_2, h_sample_2=propup_sample()
-    gibbs_hvh = theano.function([], [v_pre_2, v_mean_2, v_sample_2, h_pre_2, h_mean_2, h_sample_2])
-
-    print "ok\n\n\n\n"
-    # compute positive phase
-    shared_h.set_value(propup_sample()[2])
-
-
-    ([pre_sigmoid_nvs, nv_means, nv_samples, pre_sigmoid_nhs, nh_means, nh_samples], updates) = theano.scan(
-        rbm.gibbs_hvh, outputs_info=[None, None, None, None, None, persistent_chain], n_steps=1)
-    # determine gradients on RBM parameters
-    # note that we only need the sample at the end of the chain
-    chain_end = nv_samples[-1]
-    cost = T.mean(rbm.free_energy(shared_x)) - T.mean(rbm.free_energy(chain_end))
-    # We must not compute the gradient through the gibbs sampling
-    gparams = T.grad(cost, rbm.params, consider_constant=[chain_end])
-    # constructs the update dictionary
-    for gparam, param in zip(gparams, rbm.params):
-        # make sure that the learning rate is of the right dtype
-        updates[param] = param - gparam * T.cast(learning_rate,dtype=theano.config.floatX)
-
-    # Note that this works only if persistent is a shared variable
-    updates[persistent_chain] = nh_samples[-1]
-    # pseudo-likelihood is a better proxy for PCD
-    bit_i_idx = theano.shared(value=0, name='bit_i_idx')
-    # binarize the input image by rounding to nearest integer
-    xi = T.round(shared_x)
-    # calculate free energy for the given bit configuration
-    fe_xi = rbm.free_energy(xi)
-    # flip bit x_i of matrix xi and preserve all other bits x_{\i}
-    # Equivalent to xi[:,bit_i_idx] = 1-xi[:, bit_i_idx], but assigns
-    # the result to xi_flip, instead of working in place on xi.
-    xi_flip = T.set_subtensor(xi[:, bit_i_idx], 1 - xi[:, bit_i_idx])
-    # calculate free energy with bit flipped
-    fe_xi_flip = rbm.free_energy(xi_flip)
-    # equivalent to e^(-FE(x_i)) / (e^(-FE(x_i)) + e^(-FE(x_{\i})))
-    cost = T.mean(rbm.n_visible * T.log(T.nnet.sigmoid(fe_xi_flip -fe_xi)))
-    # increment bit_i_idx % number as part of updates
-    updates[bit_i_idx] = (bit_i_idx + 1) % rbm.n_visible
-
-    train_rbm = theano.function([], cost, updates = updates)
-
-
-    plotting_time = 0.
-    start_time = timeit.default_timer()
-    #shuffle data : Learn gesture after gesture could introduce a bias. In order to avoid this,
-    #we shuffle data to learn all gestures at the same time
-    datasetindex = []
-    last = 0
-    for s in seqlen:
-        datasetindex += range(last, last + s)
-        last += s
-    permindex = numpy.array(datasetindex)
-    rng.shuffle(permindex)
-
-    #In order visualize cost evolution during training phase
-    cost_y = []
-    # go through training epochs
-    for epoch in xrange(training_epochs):
-        # go through the training set
-        mean_cost = []
-        for batch_index in xrange(n_train_batches): #for each minibatch
-            data_idx = permindex[batch_index * batch_size:(batch_index + 1) * batch_size] #get a list of index in the shuffle index-list
-            #mean_cost += [train_rbm(data_idx)] #TODO
-
-
-
-            shared_x.set_value(dataset.get_value()[data_idx])
-            mean_cost += [train_rbm()]
-
-
-
-
-
-
-
-
-
-            ##########################################
-        print 'Training epoch %d, cost is ' % epoch, numpy.mean(mean_cost)
-        cost_y.append(numpy.mean(mean_cost))
-    end_time = timeit.default_timer()
-    pretraining_time = (end_time - start_time) - plotting_time
-    print ('RBM : Training took %f minutes' % (pretraining_time / 60.))
-    cost_y=0
-    return rbm, cost_y
-"""
 
 if __name__ == '__main__':
     #This main allow us to test our RBM on bvh dataset
